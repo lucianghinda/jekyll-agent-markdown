@@ -1,0 +1,43 @@
+plugins:
+  - rubocop-minitest
+  - rubocop-rake
+
+AllCops:
+  TargetRubyVersion: 3.2
+  NewCops: enable
+
+Naming/FileName:
+  Exclude:
+    - "lib/jekyll-agent-markdown.rb"
+
+Naming/PredicateMethod:
+  AllowedMethods:
+    - write
+
+Style/StringLiterals:
+  EnforcedStyle: double_quotes
+
+Style/StringLiteralsInInterpolation:
+  EnforcedStyle: double_quotes
+
+Style/SymbolProc:
+  AllowedMethods:
+    - with_site
+
+Style/Documentation:
+  Enabled: false
+
+Metrics/AbcSize:
+  Exclude:
+    - "test/jekyll/agent_markdown_test.rb"
+
+Metrics/MethodLength:
+  Exclude:
+    - "test/jekyll/agent_markdown_test.rb"
+
+Metrics/ClassLength:
+  Exclude:
+    - "test/jekyll/agent_markdown_test.rb"
+
+Minitest/MultipleAssertions:
+  Max: 6
