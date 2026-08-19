@@ -94,6 +94,21 @@ class RawMarkdownFileTest < Minitest::Test
   end
 end
 
+class TestDateMutationGenerator < Jekyll::Generator
+  priority :normal
+
+  def generate(site)
+    mutations = site.config["test_date_mutations"]
+    return unless mutations
+
+    site.posts.docs.each do |post|
+      next unless mutations.key?(post.data["title"])
+
+      post.data["date"] = mutations.fetch(post.data["title"])
+    end
+  end
+end
+
 class AgentMarkdownGeneratorTest < Minitest::Test
   POST_BODY = "# First heading\n\n*Raw* Markdown body.\n\n{{ site.title }}"
 
@@ -106,11 +121,32 @@ class AgentMarkdownGeneratorTest < Minitest::Test
       site.process
 
       assert_path_exists File.join(destination, "articles", "first", "index.html")
-      assert_equal "#{POST_BODY}\n", File.binread(File.join(destination, "articles", "first.md"))
-      refute_match(/^---/, File.binread(File.join(destination, "articles", "first.md")))
+      expected_markdown = "#{POST_BODY}\n\n---\nPublished at: 2026-01-01\n"
+
+      assert_equal expected_markdown, File.binread(File.join(destination, "articles", "first.md"))
+      refute_match(/\A---(?:\n|\z)/, File.binread(File.join(destination, "articles", "first.md")))
       refute_includes File.binread(File.join(destination, "articles", "first.md")), "<em>Raw</em>"
       assert_includes File.binread(File.join(destination, "articles", "first", "index.html")),
                       '<link rel="alternate" type="text/markdown" href="/blog/articles/first.md">'
+    end
+  end
+
+  def test_empty_post_export_does_not_look_like_front_matter
+    empty_post = <<~POST
+      ---
+      layout: post
+      title: Empty article
+      permalink: /articles/empty/
+      ---
+    POST
+
+    with_site(extra_posts: { "2026-01-02-empty.md" => empty_post }) do |site, destination|
+      site.process
+
+      markdown = File.binread(File.join(destination, "articles", "empty.md"))
+
+      assert_equal "Published at: 2026-01-02\n", markdown
+      refute_match(/\A---(?:\n|\z)/, markdown)
     end
   end
 
@@ -154,9 +190,154 @@ class AgentMarkdownGeneratorTest < Minitest::Test
 
         > Posts only. Pages and collections are not included.
 
-        - [First article](https://example.test/blog/articles/first.md)
+        - [First article](https://example.test/blog/articles/first.md) | Published at: 2026-01-01
       TEXT
     end
+  end
+
+  def test_includes_an_updated_date_when_the_post_provides_one
+    updated_post = <<~POST
+      ---
+      layout: post
+      title: Updated article
+      permalink: /articles/updated/
+      last_modified_at: 2026-02-03
+      ---
+      # Updated article
+    POST
+
+    with_site(extra_posts: { "2026-01-02-updated.md" => updated_post }) do |site, destination|
+      site.process
+
+      metadata = "Published at: 2026-01-02 | Updated at: 2026-02-03"
+
+      assert_includes File.binread(File.join(destination, "articles", "updated.md")), "---\n#{metadata}\n"
+      assert_includes File.binread(File.join(destination, "llms.txt")),
+                      "- [Updated article](https://example.test/blog/articles/updated.md) | #{metadata}"
+    end
+  end
+
+  def test_omits_an_updated_date_when_the_post_does_not_provide_one
+    with_site do |site, destination|
+      site.process
+
+      refute_includes File.binread(File.join(destination, "articles", "first.md")), "Updated at:"
+      refute_includes File.binread(File.join(destination, "llms.txt")), "Updated at:"
+    end
+  end
+
+  def test_can_disable_date_metadata
+    config = { "agent_markdown" => { "include_dates" => false } }
+
+    with_site(config: config) do |site, destination|
+      site.process
+
+      assert_equal "#{POST_BODY}\n", File.binread(File.join(destination, "articles", "first.md"))
+      assert_includes File.binread(File.join(destination, "llms.txt")),
+                      "- [First article](https://example.test/blog/articles/first.md)\n"
+      refute_includes File.binread(File.join(destination, "llms.txt")), "Published at:"
+    end
+  end
+
+  def test_sorts_articles_by_published_date_ascending
+    later_post = post("Later article", "/articles/later/")
+    config = { "agent_markdown" => { "sort" => "asc" } }
+
+    with_site(config: config, extra_posts: { "2026-01-03-later.md" => later_post }) do |site, destination|
+      site.process
+
+      llms_txt = File.binread(File.join(destination, "llms.txt"))
+
+      assert_operator llms_txt.index("First article"), :<, llms_txt.index("Later article")
+    end
+  end
+
+  def test_sorts_articles_by_published_date_descending
+    later_post = post("Later article", "/articles/later/")
+    config = { "agent_markdown" => { "sort" => "desc" } }
+
+    with_site(config: config, extra_posts: { "2026-01-03-later.md" => later_post }) do |site, destination|
+      site.process
+
+      llms_txt = File.binread(File.join(destination, "llms.txt"))
+
+      assert_operator llms_txt.index("Later article"), :<, llms_txt.index("First article")
+    end
+  end
+
+  def test_sorts_articles_descending_by_default
+    later_post = post("Later article", "/articles/later/")
+
+    with_site(extra_posts: { "2026-01-03-later.md" => later_post }) do |site, destination|
+      site.process
+
+      llms_txt = File.binread(File.join(destination, "llms.txt"))
+
+      assert_operator llms_txt.index("Later article"), :<, llms_txt.index("First article")
+    end
+  end
+
+  def test_sorts_dates_normalized_after_an_earlier_generator_mutates_post_data
+    posts = {
+      "2026-01-02-february.md" => post("February article", "/articles/february/"),
+      "2026-01-03-october.md" => post("October article", "/articles/october/")
+    }
+    config = {
+      "agent_markdown" => { "sort" => "asc" },
+      "test_date_mutations" => {
+        "February article" => "2026-2-1",
+        "October article" => "2026-10-01"
+      }
+    }
+
+    with_site(config: config, extra_posts: posts) do |site, destination|
+      site.process
+
+      llms_txt = File.binread(File.join(destination, "llms.txt"))
+      expected_link = "February article](https://example.test/blog/articles/february.md) | " \
+                      "Published at: 2026-02-01"
+
+      assert_order llms_txt, "First article", "February article", "October article"
+      assert_includes llms_txt, expected_link
+    end
+  end
+
+  def test_lists_invalid_dates_last_in_their_existing_order
+    posts = {
+      "2026-01-02-undated.md" => post("Undated article", "/articles/undated/"),
+      "2026-01-03-invalid.md" => post("Invalid-date article", "/articles/invalid-date/")
+    }
+    config = {
+      "test_date_mutations" => {
+        "Undated article" => "",
+        "Invalid-date article" => "not a date"
+      }
+    }
+
+    with_site(config: config, extra_posts: posts) do |site, destination|
+      site.process
+
+      llms_txt = File.binread(File.join(destination, "llms.txt"))
+
+      assert_order llms_txt, "First article", "Undated article", "Invalid-date article"
+      refute_match(/Undated article.*Published at:/, llms_txt)
+      refute_match(/Invalid-date article.*Published at:/, llms_txt)
+    end
+  end
+
+  def test_lists_posts_without_dates_last_in_their_existing_order
+    post = Struct.new(:data)
+    first_undated = post.new({})
+    dated = post.new({ "date" => Time.utc(2026, 1, 1) })
+    second_undated = post.new({ "date" => nil })
+
+    sorted = Jekyll::AgentMarkdown::Generator.new.send(
+      :sorted_posts,
+      [first_undated, dated, second_undated],
+      { "sort" => "desc" }
+    )
+
+    assert_equal [dated, first_undated, second_undated], sorted
   end
 
   def test_generates_absolute_urls_when_baseurl_is_nil
@@ -552,6 +733,7 @@ class AgentMarkdownGeneratorTest < Minitest::Test
     [
       %w[posts flase],
       ["llms_txt", 0],
+      %w[include_dates sometimes],
       ["posts", {}],
       ["llms_txt", []]
     ].each do |setting, value|
@@ -561,6 +743,14 @@ class AgentMarkdownGeneratorTest < Minitest::Test
 
       assert_match(/agent_markdown\.#{setting}.*true.*false/i, error.message)
     end
+  end
+
+  def test_rejects_an_invalid_sort_order
+    error = assert_raises(Jekyll::Errors::FatalException) do
+      with_site(config: { "agent_markdown" => { "sort" => "newest" } }) { |site| site.process }
+    end
+
+    assert_match(/agent_markdown\.sort.*asc.*desc/i, error.message)
   end
 
   def test_rejects_invalid_per_post_configuration_values
@@ -680,6 +870,13 @@ class AgentMarkdownGeneratorTest < Minitest::Test
     offset = Jekyll.logger.messages.length
     yield
     Jekyll.logger.messages.drop(offset)
+  end
+
+  def assert_order(content, *items)
+    positions = items.map { |item| content.index(item) }
+
+    assert_predicate positions, :all?, "expected every item to appear in #{content.inspect}"
+    assert_equal positions.sort, positions
   end
 
   def write_source_file(source, name, content)

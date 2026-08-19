@@ -6,12 +6,17 @@ require "open3"
 class LoadOrderTest < Minitest::Test
   IMPLEMENTATION_FEATURES = %w[
     jekyll/agent_markdown/configuration
+    jekyll/agent_markdown/date_metadata
     jekyll/agent_markdown/destination_claims
     jekyll/agent_markdown/markdown_sibling_path
     jekyll/agent_markdown/raw_markdown_file
     jekyll/agent_markdown/generator
     jekyll/agent_markdown/version
   ].freeze
+
+  def test_exposes_the_release_version
+    assert_equal "0.2.0", Jekyll::AgentMarkdown::VERSION
+  end
 
   def test_implementation_files_can_be_required_directly
     IMPLEMENTATION_FEATURES.each do |feature|

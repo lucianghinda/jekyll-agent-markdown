@@ -27,9 +27,11 @@ Both exports are enabled by default:
 agent_markdown:
   posts: true
   llms_txt: true
+  sort: desc
+  include_dates: true
 ```
 
-`posts` and `llms_txt` are the only accepted settings. Each accepts `true`, `false`, or one of the false-style strings `"false"`, `"no"`, and `"off"` (case-insensitively). Unknown keys and other values stop the build with a configuration error instead of being silently ignored. An explicit per-post `agent_markdown` value follows the same rules, so a mistyped opt-out cannot publish raw source by accident.
+`posts`, `llms_txt`, and `include_dates` accept `true`, `false`, or one of the false-style strings `"false"`, `"no"`, and `"off"` (case-insensitively). `sort` accepts `asc` or `desc` and defaults to `desc`, ordering the `llms.txt` article list by normalized published date. Posts with a missing, incomplete, or invalid published date are listed last in their existing order. Unknown keys and other values stop the build with a configuration error instead of being silently ignored. An explicit per-post `agent_markdown` value follows the boolean-setting rules, so a mistyped opt-out cannot publish raw source by accident.
 
 Set `url` to your site's absolute HTTP(S) URL; the `llms.txt` index uses it to generate absolute article links:
 
@@ -54,7 +56,16 @@ Markdown sibling paths are deterministic:
 
 Extensions are matched case-insensitively, and percent-encoded aliases are compared by their final decoded destination. Destination ownership also treats case-only and Unicode-normalization aliases as equivalent on every platform, keeping builds portable across filesystems. File-versus-directory conflicts are reserved as well. Before adding an export, the plugin checks every page, static file, and writable collection document already known to Jekyll. The existing destination owner wins; later post exports are skipped with a warning and omitted from `llms.txt`. A committed `llms.txt` wins in the same way.
 
-The generated file contains the post's original Markdown body with no front matter, HTML conversion, or Liquid rendering. Liquid tags and directives such as `{{ site.title }}` are published literally. Exclude one post with front matter:
+The generated file preserves the post's original Markdown body as its initial content, with no front matter, HTML conversion, or Liquid rendering. Liquid tags and directives such as `{{ site.title }}` are published literally. By default, the plugin appends the post's published `date` and optional `last_modified_at` value as a small footer:
+
+```text
+---
+Published at: 2026-01-01 | Updated at: 2026-02-03
+```
+
+Each available date is formatted as `YYYY-MM-DD`. String values must contain an explicit year, month, and day; missing, incomplete, and invalid values and their labels are omitted. An empty post contains only the metadata line, without a leading `---` that could be mistaken for front matter. Set `include_dates: false` to omit date metadata from both Markdown exports and `llms.txt`, leaving the body-only export shape used before date metadata was introduced.
+
+Exclude one post with front matter:
 
 ```yaml
 agent_markdown: false
@@ -81,7 +92,7 @@ The generated `/llms.txt` is a compact index, for example:
 
 > Posts only. Pages and collections are not included.
 
-- [First article](https://example.com/articles/first.md)
+- [First article](https://example.com/articles/first.md) | Published at: 2026-01-01
 ```
 
 ## Deployment notes
@@ -90,7 +101,7 @@ Configure your host to serve generated `.md` files as `Content-Type: text/markdo
 
 ## v0.1.0 limitations
 
-Only posts are exported. Pages and custom collections, custom Markdown transformations or templates, front-matter allowlisting, automatic response headers, sitemaps, and AI-specific metadata are intentionally deferred.
+Only posts are exported. Pages and custom collections, custom Markdown transformations or templates, front-matter allowlisting, automatic response headers, sitemaps, and richer article metadata are intentionally deferred.
 
 ## Development
 

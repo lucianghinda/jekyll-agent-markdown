@@ -2,6 +2,7 @@
 
 require "jekyll"
 require_relative "configuration"
+require_relative "date_metadata"
 require_relative "destination_claims"
 require_relative "markdown_sibling_path"
 require_relative "raw_markdown_file"
@@ -24,7 +25,7 @@ module Jekyll
 
         @context = Liquid::Context.new({}, {}, { site: site })
         destination_claims = destination_claims(site)
-        included_posts = export_posts(site, destination_claims) if Configuration.enabled?(settings, "posts")
+        included_posts = export_posts(site, settings, destination_claims) if Configuration.enabled?(settings, "posts")
         write_llms_txt(site, settings, included_posts || [], destination_claims)
       end
 
@@ -36,16 +37,16 @@ module Jekyll
         end
       end
 
-      def export_posts(site, destination_claims)
-        site.posts.docs.filter_map { |post| export_post(site, destination_claims, post) }
+      def export_posts(site, settings, destination_claims)
+        site.posts.docs.filter_map { |post| export_post(site, settings, destination_claims, post) }
       end
 
-      def export_post(site, destination_claims, post)
+      def export_post(site, settings, destination_claims, post)
         setting = post.data.fetch("agent_markdown", true)
         setting_name = "agent_markdown in #{post.relative_path}"
         return unless Configuration.enabled_value?(setting, name: setting_name)
 
-        file = RawMarkdownFile.new(site, MarkdownSiblingPath.for(post.url), post.content)
+        file = RawMarkdownFile.new(site, MarkdownSiblingPath.for(post.url), post_content(post, settings))
         url = file.url
         return collision_warning(post, url) unless claim_destination?(destination_claims, site, file)
 
@@ -64,15 +65,13 @@ module Jekyll
         return unless Configuration.enabled?(settings, "llms_txt")
         return unless llms_txt_ready?(site, settings)
 
-        file = RawMarkdownFile.new(site, "/llms.txt", llms_txt(site, posts))
+        file = RawMarkdownFile.new(site, "/llms.txt", llms_txt(site, posts, settings))
         return llms_txt_collision_warning unless claim_destination?(destination_claims, site, file)
 
         site.static_files << file
       end
 
-      def claim_destination?(destination_claims, site, file)
-        destination_claims.claim?(file.destination(site.dest))
-      end
+      def claim_destination?(destination_claims, site, file) = destination_claims.claim?(file.destination(site.dest))
 
       def llms_txt_collision_warning
         Jekyll.logger.warn "AgentMarkdown:",
@@ -91,8 +90,8 @@ module Jekyll
         false
       end
 
-      def llms_txt(site, posts)
-        sections = [llms_headings(site), article_links(site, posts)]
+      def llms_txt(site, posts, settings)
+        sections = [llms_headings(site), article_links(site, posts, settings)]
         "#{sections.reject(&:empty?).join("\n\n")}\n"
       end
 
@@ -106,21 +105,35 @@ module Jekyll
         headings.join("\n\n")
       end
 
-      def one_line(value)
-        return "" if value.nil? || value == false
+      def one_line(value) = value ? value.to_s.gsub(/\s+/, " ").strip : ""
 
-        value.to_s.gsub(/\s+/, " ").strip
-      end
-
-      def article_links(site, posts)
+      def article_links(site, posts, settings)
         site_url = site.config["url"].sub(%r{/+\z}, "")
-        posts.map { |post| article_link(site_url, post) }.join("\n")
+        sorted_posts(posts, settings).map { |post| article_link(site_url, post, settings) }.join("\n")
       end
 
-      def article_link(site_url, post)
-        url = "#{site_url}#{relative_url(post.data.fetch("agent_markdown_url"))}"
-        "- [#{link_title(post)}](#{escaped_link_url(url)})"
+      def sorted_posts(posts, settings)
+        dated, undated = posts.map { |post| [post, date_metadata(post).published_date] }.partition(&:last)
+        dated.sort_by!(&:last)
+        dated.reverse! if Configuration.sort_order(settings) == "desc"
+        (dated + undated).map(&:first)
       end
+
+      def article_link(site_url, post, settings)
+        url = "#{site_url}#{relative_url(post.data.fetch("agent_markdown_url"))}"
+        link = "- [#{link_title(post)}](#{escaped_link_url(url)})"
+        return link unless Configuration.enabled?(settings, "include_dates")
+
+        [link, date_metadata(post).to_s].reject(&:empty?).join(" | ")
+      end
+
+      def post_content(post, settings)
+        return post.content unless Configuration.enabled?(settings, "include_dates")
+
+        date_metadata(post).append_to(post.content)
+      end
+
+      def date_metadata(post) = DateMetadata.new(post.data)
 
       # Backslashes and square brackets would end the Markdown link text early;
       # whitespace runs (including newlines) would break the one-entry-per-line
@@ -132,9 +145,7 @@ module Jekyll
       end
 
       # Unescaped parentheses would end the Markdown link destination early.
-      def escaped_link_url(url)
-        url.gsub("(", "%28").gsub(")", "%29")
-      end
+      def escaped_link_url(url) = url.gsub("(", "%28").gsub(")", "%29")
     end
   end
 end
