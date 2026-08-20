@@ -34,7 +34,7 @@ agent_markdown:
 
 `posts`, `llms_txt`, `include_author`, and `include_dates` accept `true`, `false`, or one of the false-style strings `"false"`, `"no"`, and `"off"` (case-insensitively). `sort` accepts `asc` or `desc` and defaults to `desc`, ordering the `llms.txt` article list by normalized published date. Posts with a missing, incomplete, or invalid published date are listed last in their existing order. Unknown keys and other values stop the build with a configuration error instead of being silently ignored. An explicit per-post `agent_markdown` value follows the boolean-setting rules, so a mistyped opt-out cannot publish raw source by accident.
 
-By default, `llms.txt` includes the blog author's name from either a scalar Jekyll setting (`author: Jane Doe`) or a mapping (`author: { name: Jane Doe }`). If no author name is configured, the line is omitted. Set `include_author: false` under `agent_markdown` to omit it explicitly.
+By default, `llms.txt` and each exported article footer include the blog author's name from either a scalar Jekyll setting (`author: Jane Doe`) or a mapping (`author: { name: Jane Doe }`). If no author name is configured, the entry is omitted. Set `include_author: false` under `agent_markdown` to omit author metadata from both outputs.
 
 Set `url` to your site's absolute HTTP(S) URL; the `llms.txt` index uses it to generate absolute article links:
 
@@ -59,14 +59,14 @@ Markdown sibling paths are deterministic:
 
 Extensions are matched case-insensitively, and percent-encoded aliases are compared by their final decoded destination. Destination ownership also treats case-only and Unicode-normalization aliases as equivalent on every platform, keeping builds portable across filesystems. File-versus-directory conflicts are reserved as well. Before adding an export, the plugin checks every page, static file, and writable collection document already known to Jekyll. The existing destination owner wins; later post exports are skipped with a warning and omitted from `llms.txt`. A committed `llms.txt` wins in the same way.
 
-The generated file preserves the post's original Markdown body as its initial content, with no front matter, HTML conversion, or Liquid rendering. Liquid tags and directives such as `{{ site.title }}` are published literally. By default, the plugin appends the post's published `date` and optional `last_modified_at` value as a small footer:
+The generated file preserves the post's original Markdown body as its initial content, with no front matter, HTML conversion, or Liquid rendering. Liquid tags and directives such as `{{ site.title }}` are published literally. By default, the plugin appends the post's published `date`, optional `last_modified_at` value, and site author as a small footer:
 
 ```text
 ---
-Published at: 2026-01-01 | Updated at: 2026-02-03
+Published at: 2026-01-01 | Updated at: 2026-02-03 | Author: Jane Doe
 ```
 
-Each available date is formatted as `YYYY-MM-DD`. String values must contain an explicit year, month, and day; missing, incomplete, and invalid values and their labels are omitted. An empty post contains only the metadata line, without a leading `---` that could be mistaken for front matter. Set `include_dates: false` to omit date metadata from both Markdown exports and `llms.txt`, leaving the body-only export shape used before date metadata was introduced.
+Each available date is formatted as `YYYY-MM-DD`. String values must contain an explicit year, month, and day; missing, incomplete, and invalid values and their labels are omitted. An empty post contains only the metadata line, without a leading `---` that could be mistaken for front matter. `include_dates: false` omits dates from Markdown exports and `llms.txt` article links while leaving an author-only footer when an author is configured. `include_author: false` leaves a date-only footer. Set both options to `false` for a body-only export.
 
 Exclude one post with front matter:
 

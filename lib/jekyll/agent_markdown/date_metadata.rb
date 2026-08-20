@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "date"
+require_relative "metadata_footer"
 
 module Jekyll
   module AgentMarkdown
@@ -21,10 +22,7 @@ module Jekyll
       end
 
       def append_to(content)
-        return content if to_s.empty?
-        return "#{self}\n" if content.empty?
-
-        "#{content}#{separator_for(content)}---\n#{self}\n"
+        MetadataFooter.new([to_s]).append_to(content)
       end
 
       def published_date = parsed_date(@data["date"])
@@ -34,10 +32,6 @@ module Jekyll
       def entry(label, value)
         date = formatted_date(value)
         "#{label}: #{date}" if date
-      end
-
-      def separator_for(content)
-        content.end_with?("\n") ? "\n" : "\n\n"
       end
 
       def formatted_date(value)
