@@ -1,5 +1,10 @@
 ## [Unreleased]
 
+## [0.2.0] - 2026-08-20
+
+- Add configurable `llms.txt` ordering by normalized published date, defaulting to newest first and placing missing or invalid dates last.
+- Include available published and updated dates in `llms.txt` and Markdown exports by default, with an `include_dates` opt-out.
+
 ## [0.1.0] - 2026-08-18
 
 - Export Jekyll posts as raw Markdown siblings.

@@ -6,8 +6,9 @@ require "uri"
 module Jekyll
   module AgentMarkdown
     class Configuration
-      ALLOWED_SETTINGS = %w[llms_txt posts].freeze
+      ALLOWED_SETTINGS = %w[include_dates llms_txt posts sort].freeze
       FALSE_STRINGS = %w[false no off].freeze
+      SORT_ORDERS = %w[asc desc].freeze
 
       class << self
         def for(site)
@@ -24,6 +25,10 @@ module Jekyll
 
         def enabled?(settings, key)
           !disabled?(settings.fetch(key, true))
+        end
+
+        def sort_order(settings)
+          settings.fetch("sort", "desc")
         end
 
         def enabled_value?(value, name:)
@@ -66,8 +71,19 @@ module Jekyll
 
         def validate_values!(settings)
           settings.each do |key, value|
-            validate_value!("agent_markdown.#{key}", value)
+            if key == "sort"
+              validate_sort_order!(value)
+            else
+              validate_value!("agent_markdown.#{key}", value)
+            end
           end
+        end
+
+        def validate_sort_order!(value)
+          return if SORT_ORDERS.include?(value)
+
+          raise Jekyll::Errors::FatalException,
+                "agent_markdown.sort must be asc or desc; got #{value.inspect}"
         end
 
         def validate_value!(name, value)
