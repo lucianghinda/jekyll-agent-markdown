@@ -1,5 +1,9 @@
 ## [Unreleased]
 
+## [0.3.0] - 2026-08-20
+
+- Include the site author's name in `llms.txt` by default, with an `include_author` opt-out.
+
 ## [0.2.0] - 2026-08-20
 
 - Add configurable `llms.txt` ordering by normalized published date, defaulting to newest first and placing missing or invalid dates last.

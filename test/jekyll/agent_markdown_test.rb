@@ -186,12 +186,44 @@ class AgentMarkdownGeneratorTest < Minitest::Test
 
         > A short description
 
+        Author: Example Author
+
         ## Articles
 
         > Posts only. Pages and collections are not included.
 
         - [First article](https://example.test/blog/articles/first.md) | Published at: 2026-01-01
       TEXT
+    end
+  end
+
+  def test_includes_the_name_from_an_author_mapping
+    with_site(config: { "author" => { "name" => "Example\nAuthor" } }) do |site, destination|
+      site.process
+
+      assert_includes File.binread(File.join(destination, "llms.txt")), "Author: Example Author"
+    end
+  end
+
+  def test_can_disable_author_metadata
+    [false, "off"].each do |value|
+      config = { "agent_markdown" => { "include_author" => value } }
+
+      with_site(config: config) do |site, destination|
+        site.process
+
+        refute_includes File.binread(File.join(destination, "llms.txt")), "Author:"
+      end
+    end
+  end
+
+  def test_omits_author_metadata_when_the_site_has_no_author_name
+    [nil, false, {}, { "twitter" => "example" }].each do |author|
+      with_site(config: { "author" => author }) do |site, destination|
+        site.process
+
+        refute_includes File.binread(File.join(destination, "llms.txt")), "Author:"
+      end
     end
   end
 
@@ -429,7 +461,7 @@ class AgentMarkdownGeneratorTest < Minitest::Test
 
       llms_txt = File.binread(File.join(destination, "llms.txt"))
 
-      assert_match(/\A#\n\n## Articles/, llms_txt)
+      assert_match(/\A#\n\nAuthor: Example Author\n\n## Articles/, llms_txt)
       refute_includes llms_txt, "false"
     end
   end
@@ -734,6 +766,7 @@ class AgentMarkdownGeneratorTest < Minitest::Test
       %w[posts flase],
       ["llms_txt", 0],
       %w[include_dates sometimes],
+      ["include_author", 0],
       ["posts", {}],
       ["llms_txt", []]
     ].each do |setting, value|
@@ -775,6 +808,8 @@ class AgentMarkdownGeneratorTest < Minitest::Test
 
         > A short description
 
+        Author: Example Author
+
         ## Articles
 
         > Posts only. Pages and collections are not included.
@@ -815,6 +850,7 @@ class AgentMarkdownGeneratorTest < Minitest::Test
     {
       "title" => "Example Site",
       "description" => "A short description",
+      "author" => "Example Author",
       "url" => "https://example.test/",
       "baseurl" => "/blog/",
       "markdown" => "kramdown"

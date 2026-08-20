@@ -8,6 +8,7 @@ class LoadOrderTest < Minitest::Test
     jekyll/agent_markdown/configuration
     jekyll/agent_markdown/date_metadata
     jekyll/agent_markdown/destination_claims
+    jekyll/agent_markdown/llms_headings
     jekyll/agent_markdown/markdown_sibling_path
     jekyll/agent_markdown/raw_markdown_file
     jekyll/agent_markdown/generator
@@ -15,7 +16,7 @@ class LoadOrderTest < Minitest::Test
   ].freeze
 
   def test_exposes_the_release_version
-    assert_equal "0.2.0", Jekyll::AgentMarkdown::VERSION
+    assert_equal "0.3.0", Jekyll::AgentMarkdown::VERSION
   end
 
   def test_implementation_files_can_be_required_directly

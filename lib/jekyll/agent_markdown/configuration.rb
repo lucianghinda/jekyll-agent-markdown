@@ -6,7 +6,7 @@ require "uri"
 module Jekyll
   module AgentMarkdown
     class Configuration
-      ALLOWED_SETTINGS = %w[include_dates llms_txt posts sort].freeze
+      ALLOWED_SETTINGS = %w[include_author include_dates llms_txt posts sort].freeze
       FALSE_STRINGS = %w[false no off].freeze
       SORT_ORDERS = %w[asc desc].freeze
 
