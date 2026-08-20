@@ -121,7 +121,7 @@ class AgentMarkdownGeneratorTest < Minitest::Test
       site.process
 
       assert_path_exists File.join(destination, "articles", "first", "index.html")
-      expected_markdown = "#{POST_BODY}\n\n---\nPublished at: 2026-01-01\n"
+      expected_markdown = "#{POST_BODY}\n\n---\nPublished at: 2026-01-01 | Author: Example Author\n"
 
       assert_equal expected_markdown, File.binread(File.join(destination, "articles", "first.md"))
       refute_match(/\A---(?:\n|\z)/, File.binread(File.join(destination, "articles", "first.md")))
@@ -145,7 +145,7 @@ class AgentMarkdownGeneratorTest < Minitest::Test
 
       markdown = File.binread(File.join(destination, "articles", "empty.md"))
 
-      assert_equal "Published at: 2026-01-02\n", markdown
+      assert_equal "Published at: 2026-01-02 | Author: Example Author\n", markdown
       refute_match(/\A---(?:\n|\z)/, markdown)
     end
   end
@@ -202,6 +202,8 @@ class AgentMarkdownGeneratorTest < Minitest::Test
       site.process
 
       assert_includes File.binread(File.join(destination, "llms.txt")), "Author: Example Author"
+      assert_includes File.binread(File.join(destination, "articles", "first.md")),
+                      "Published at: 2026-01-01 | Author: Example Author"
     end
   end
 
@@ -213,6 +215,10 @@ class AgentMarkdownGeneratorTest < Minitest::Test
         site.process
 
         refute_includes File.binread(File.join(destination, "llms.txt")), "Author:"
+        markdown = File.binread(File.join(destination, "articles", "first.md"))
+
+        assert_includes markdown, "Published at: 2026-01-01"
+        refute_includes markdown, "Author:"
       end
     end
   end
@@ -223,6 +229,7 @@ class AgentMarkdownGeneratorTest < Minitest::Test
         site.process
 
         refute_includes File.binread(File.join(destination, "llms.txt")), "Author:"
+        refute_includes File.binread(File.join(destination, "articles", "first.md")), "Author:"
       end
     end
   end
@@ -241,11 +248,13 @@ class AgentMarkdownGeneratorTest < Minitest::Test
     with_site(extra_posts: { "2026-01-02-updated.md" => updated_post }) do |site, destination|
       site.process
 
-      metadata = "Published at: 2026-01-02 | Updated at: 2026-02-03"
+      date_metadata = "Published at: 2026-01-02 | Updated at: 2026-02-03"
+      article_metadata = "#{date_metadata} | Author: Example Author"
 
-      assert_includes File.binread(File.join(destination, "articles", "updated.md")), "---\n#{metadata}\n"
+      assert_includes File.binread(File.join(destination, "articles", "updated.md")),
+                      "---\n#{article_metadata}\n"
       assert_includes File.binread(File.join(destination, "llms.txt")),
-                      "- [Updated article](https://example.test/blog/articles/updated.md) | #{metadata}"
+                      "- [Updated article](https://example.test/blog/articles/updated.md) | #{date_metadata}"
     end
   end
 
@@ -264,10 +273,21 @@ class AgentMarkdownGeneratorTest < Minitest::Test
     with_site(config: config) do |site, destination|
       site.process
 
-      assert_equal "#{POST_BODY}\n", File.binread(File.join(destination, "articles", "first.md"))
+      assert_equal "#{POST_BODY}\n\n---\nAuthor: Example Author\n",
+                   File.binread(File.join(destination, "articles", "first.md"))
       assert_includes File.binread(File.join(destination, "llms.txt")),
                       "- [First article](https://example.test/blog/articles/first.md)\n"
       refute_includes File.binread(File.join(destination, "llms.txt")), "Published at:"
+    end
+  end
+
+  def test_can_disable_both_date_and_author_metadata
+    config = { "agent_markdown" => { "include_dates" => false, "include_author" => false } }
+
+    with_site(config: config) do |site, destination|
+      site.process
+
+      assert_equal "#{POST_BODY}\n", File.binread(File.join(destination, "articles", "first.md"))
     end
   end
 

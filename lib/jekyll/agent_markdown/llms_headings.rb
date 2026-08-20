@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require_relative "author_metadata"
 require_relative "configuration"
 
 module Jekyll
@@ -29,14 +30,8 @@ module Jekyll
       def author_heading
         return unless Configuration.enabled?(settings, "include_author")
 
-        name = author_name
-        "Author: #{name}" unless name.empty?
-      end
-
-      def author_name
-        author = site.config["author"]
-        author = author["name"] || author[:name] if author.is_a?(Hash)
-        one_line(author)
+        metadata = AuthorMetadata.new(site.config).to_s
+        metadata unless metadata.empty?
       end
 
       def articles_description = "> Posts only. Pages and collections are not included."

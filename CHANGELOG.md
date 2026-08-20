@@ -1,5 +1,9 @@
 ## [Unreleased]
 
+## [0.3.1] - 2026-08-20
+
+- Include the site author in each exported article's metadata footer on the same line as published and updated dates.
+
 ## [0.3.0] - 2026-08-20
 
 - Include the site author's name in `llms.txt` by default, with an `include_author` opt-out.

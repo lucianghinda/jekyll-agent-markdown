@@ -1,11 +1,13 @@
 # frozen_string_literal: true
 
 require "jekyll"
+require_relative "author_metadata"
 require_relative "configuration"
 require_relative "date_metadata"
 require_relative "destination_claims"
 require_relative "llms_headings"
 require_relative "markdown_sibling_path"
+require_relative "metadata_footer"
 require_relative "raw_markdown_file"
 
 module Jekyll
@@ -47,7 +49,7 @@ module Jekyll
         setting_name = "agent_markdown in #{post.relative_path}"
         return unless Configuration.enabled_value?(setting, name: setting_name)
 
-        file = RawMarkdownFile.new(site, MarkdownSiblingPath.for(post.url), post_content(post, settings))
+        file = RawMarkdownFile.new(site, MarkdownSiblingPath.for(post.url), post_content(site, post, settings))
         url = file.url
         return collision_warning(post, url) unless claim_destination?(destination_claims, site, file)
 
@@ -116,10 +118,11 @@ module Jekyll
         [link, date_metadata(post).to_s].reject(&:empty?).join(" | ")
       end
 
-      def post_content(post, settings)
-        return post.content unless Configuration.enabled?(settings, "include_dates")
-
-        date_metadata(post).append_to(post.content)
+      def post_content(site, post, settings)
+        entries = []
+        entries << date_metadata(post).to_s if Configuration.enabled?(settings, "include_dates")
+        entries << AuthorMetadata.new(site.config).to_s if Configuration.enabled?(settings, "include_author")
+        MetadataFooter.new(entries).append_to(post.content)
       end
 
       def date_metadata(post) = DateMetadata.new(post.data)
