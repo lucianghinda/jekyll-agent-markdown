@@ -4,6 +4,7 @@ require "jekyll"
 require_relative "configuration"
 require_relative "date_metadata"
 require_relative "destination_claims"
+require_relative "llms_headings"
 require_relative "markdown_sibling_path"
 require_relative "raw_markdown_file"
 
@@ -91,21 +92,9 @@ module Jekyll
       end
 
       def llms_txt(site, posts, settings)
-        sections = [llms_headings(site), article_links(site, posts, settings)]
+        sections = [LlmsHeadings.new(site, settings).to_s, article_links(site, posts, settings)]
         "#{sections.reject(&:empty?).join("\n\n")}\n"
       end
-
-      def llms_headings(site)
-        title = one_line(site.config.fetch("title", ""))
-        headings = ["# #{title}".rstrip]
-        description = one_line(site.config["description"])
-        headings << "> #{description}" unless description.empty?
-        headings << "## Articles"
-        headings << "> Posts only. Pages and collections are not included."
-        headings.join("\n\n")
-      end
-
-      def one_line(value) = value ? value.to_s.gsub(/\s+/, " ").strip : ""
 
       def article_links(site, posts, settings)
         site_url = site.config["url"].sub(%r{/+\z}, "")

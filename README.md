@@ -28,10 +28,13 @@ agent_markdown:
   posts: true
   llms_txt: true
   sort: desc
+  include_author: true
   include_dates: true
 ```
 
-`posts`, `llms_txt`, and `include_dates` accept `true`, `false`, or one of the false-style strings `"false"`, `"no"`, and `"off"` (case-insensitively). `sort` accepts `asc` or `desc` and defaults to `desc`, ordering the `llms.txt` article list by normalized published date. Posts with a missing, incomplete, or invalid published date are listed last in their existing order. Unknown keys and other values stop the build with a configuration error instead of being silently ignored. An explicit per-post `agent_markdown` value follows the boolean-setting rules, so a mistyped opt-out cannot publish raw source by accident.
+`posts`, `llms_txt`, `include_author`, and `include_dates` accept `true`, `false`, or one of the false-style strings `"false"`, `"no"`, and `"off"` (case-insensitively). `sort` accepts `asc` or `desc` and defaults to `desc`, ordering the `llms.txt` article list by normalized published date. Posts with a missing, incomplete, or invalid published date are listed last in their existing order. Unknown keys and other values stop the build with a configuration error instead of being silently ignored. An explicit per-post `agent_markdown` value follows the boolean-setting rules, so a mistyped opt-out cannot publish raw source by accident.
+
+By default, `llms.txt` includes the blog author's name from either a scalar Jekyll setting (`author: Jane Doe`) or a mapping (`author: { name: Jane Doe }`). If no author name is configured, the line is omitted. Set `include_author: false` under `agent_markdown` to omit it explicitly.
 
 Set `url` to your site's absolute HTTP(S) URL; the `llms.txt` index uses it to generate absolute article links:
 
@@ -87,6 +90,8 @@ The generated `/llms.txt` is a compact index, for example:
 # Example Site
 
 > A short description
+
+Author: Example Author
 
 ## Articles
 

@@ -14,6 +14,7 @@ class PackageTest < Minitest::Test
 
     assert_includes specification.files, "lib/jekyll-agent-markdown.rb"
     assert_includes specification.files, "lib/jekyll/agent_markdown/generator.rb"
+    assert_includes specification.files, "lib/jekyll/agent_markdown/llms_headings.rb"
     assert_includes specification.files, "README.md"
     assert_includes specification.files, "LICENSE.txt"
   end
