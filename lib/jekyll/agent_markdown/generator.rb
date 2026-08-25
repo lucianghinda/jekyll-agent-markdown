@@ -2,37 +2,66 @@
 
 require "jekyll"
 require_relative "author_metadata"
+require_relative "collection_validator"
 require_relative "configuration"
 require_relative "date_metadata"
 require_relative "destination_claims"
+require_relative "document_exporter"
+require_relative "llms_full_renderer"
 require_relative "llms_headings"
-require_relative "markdown_sibling_path"
+require_relative "llms_index_renderer"
+require_relative "llms_document_ordering"
 require_relative "metadata_footer"
-require_relative "raw_markdown_file"
+require_relative "source_documents"
 
 module Jekyll
   module AgentMarkdown
     class Generator < Jekyll::Generator
       include Jekyll::Filters::URLFilters
 
-      URL_REQUIRED_MESSAGE =
+      LLMS_TXT_URL_REQUIRED_MESSAGE =
         "url is required for agent_markdown.llms_txt and must be an absolute HTTP(S) URL " \
         "without credentials, a query, or a fragment"
+      LLMS_FULL_TXT_URL_REQUIRED_MESSAGE =
+        "url is required for agent_markdown.llms_full_txt and must be an absolute HTTP(S) URL " \
+        "without credentials, a query, or a fragment"
+      ONE_MEBIBYTE = 1_048_576
 
       # Run after normal- and high-priority generators so their post changes are exported.
+      # Destination claims therefore cover only what Jekyll knows at this point; a
+      # generator declaring `priority :lowest` runs later and can still claim the
+      # same destination. Jekyll offers no hook to detect that from here.
       priority :low
+
+      attr_reader :exported_documents
 
       def generate(site)
         settings = Configuration.for(site)
         return if settings == false
 
-        @context = Liquid::Context.new({}, {}, { site: site })
-        destination_claims = destination_claims(site)
-        included_posts = export_posts(site, settings, destination_claims) if Configuration.enabled?(settings, "posts")
-        write_llms_txt(site, settings, included_posts || [], destination_claims)
+        @exported_documents = exported_documents_for(site, settings)
+        write_llms_txt(site, settings, exported_documents, @destination_claims)
+        write_llms_full_txt(site, settings, exported_documents, @destination_claims)
       end
 
       private
+
+      def exported_documents_for(site, settings)
+        @context = Liquid::Context.new({}, {}, { site: site })
+        collection_validator = CollectionValidator.new(site)
+        collection_validator.validate!(Configuration.collection_names(settings))
+        @destination_claims = destination_claims(site)
+        exporter = DocumentExporter.new(
+          site, settings, @destination_claims, content_for_post: ->(post) { post_content(site, post, settings) }
+        )
+        source_documents(site, settings, collection_validator).filter_map do |document, source_kind, collection_name|
+          exporter.export(document, source_kind:, collection_name:)
+        end
+      end
+
+      def source_documents(site, settings, collection_validator)
+        SourceDocuments.new(site, settings, collection_validator:)
+      end
 
       def destination_claims(site)
         DestinationClaims.new(site.dest).tap do |claims|
@@ -40,35 +69,11 @@ module Jekyll
         end
       end
 
-      def export_posts(site, settings, destination_claims)
-        site.posts.docs.filter_map { |post| export_post(site, settings, destination_claims, post) }
-      end
-
-      def export_post(site, settings, destination_claims, post)
-        setting = post.data.fetch("agent_markdown", true)
-        setting_name = "agent_markdown in #{post.relative_path}"
-        return unless Configuration.enabled_value?(setting, name: setting_name)
-
-        file = RawMarkdownFile.new(site, MarkdownSiblingPath.for(post.url), post_content(site, post, settings))
-        url = file.url
-        return collision_warning(post, url) unless claim_destination?(destination_claims, site, file)
-
-        post.data["agent_markdown_url"] = url
-        site.static_files << file
-        post
-      end
-
-      def collision_warning(post, url)
-        Jekyll.logger.warn "AgentMarkdown:",
-                           "skipping #{post.relative_path}: #{url} already belongs to another file"
-        nil
-      end
-
-      def write_llms_txt(site, settings, posts, destination_claims)
+      def write_llms_txt(site, settings, documents, destination_claims)
         return unless Configuration.enabled?(settings, "llms_txt")
         return unless llms_txt_ready?(site, settings)
 
-        file = RawMarkdownFile.new(site, "/llms.txt", llms_txt(site, posts, settings))
+        file = RawMarkdownFile.new(site, "/llms.txt", LlmsIndexRenderer.new(site, settings, documents).to_s)
         return llms_txt_collision_warning unless claim_destination?(destination_claims, site, file)
 
         site.static_files << file
@@ -82,40 +87,47 @@ module Jekyll
         nil
       end
 
+      def write_llms_full_txt(site, settings, documents, destination_claims)
+        return unless Configuration.enabled?(settings, "llms_full_txt")
+
+        validate_llms_full_txt_url!(site)
+        placeholder = RawMarkdownFile.new(site, "/llms-full.txt", "")
+        return llms_full_txt_collision_warning unless claim_destination?(destination_claims, site, placeholder)
+
+        content = LlmsFullRenderer.new(site, settings, documents).to_s
+        warn_if_llms_full_txt_is_large(content)
+        file = RawMarkdownFile.new(site, "/llms-full.txt", content)
+
+        site.static_files << file
+      end
+
+      def validate_llms_full_txt_url!(site)
+        return if Configuration.absolute_http_url?(site.config["url"])
+
+        raise Jekyll::Errors::FatalException, LLMS_FULL_TXT_URL_REQUIRED_MESSAGE
+      end
+
+      def warn_if_llms_full_txt_is_large(content)
+        return unless content.bytesize > ONE_MEBIBYTE
+
+        Jekyll.logger.warn "AgentMarkdown:", "llms-full.txt exceeds 1 MiB; consider reducing its size"
+      end
+
+      def llms_full_txt_collision_warning
+        Jekyll.logger.warn "AgentMarkdown:",
+                           "skipping /llms-full.txt: the destination already belongs to another file"
+        nil
+      end
+
       # A missing url only fails the build when llms_txt was explicitly
       # configured; the default is to warn and skip so adding the gem never
       # breaks a previously green build.
       def llms_txt_ready?(site, settings)
         return true if Configuration.absolute_http_url?(site.config["url"])
-        raise Jekyll::Errors::FatalException, URL_REQUIRED_MESSAGE if settings.key?("llms_txt")
+        raise Jekyll::Errors::FatalException, LLMS_TXT_URL_REQUIRED_MESSAGE if settings.key?("llms_txt")
 
-        Jekyll.logger.warn "AgentMarkdown:", "#{URL_REQUIRED_MESSAGE}; skipping llms.txt"
+        Jekyll.logger.warn "AgentMarkdown:", "#{LLMS_TXT_URL_REQUIRED_MESSAGE}; skipping llms.txt"
         false
-      end
-
-      def llms_txt(site, posts, settings)
-        sections = [LlmsHeadings.new(site, settings).to_s, article_links(site, posts, settings)]
-        "#{sections.reject(&:empty?).join("\n\n")}\n"
-      end
-
-      def article_links(site, posts, settings)
-        site_url = site.config["url"].sub(%r{/+\z}, "")
-        sorted_posts(posts, settings).map { |post| article_link(site_url, post, settings) }.join("\n")
-      end
-
-      def sorted_posts(posts, settings)
-        dated, undated = posts.map { |post| [post, date_metadata(post).published_date] }.partition(&:last)
-        dated.sort_by!(&:last)
-        dated.reverse! if Configuration.sort_order(settings) == "desc"
-        (dated + undated).map(&:first)
-      end
-
-      def article_link(site_url, post, settings)
-        url = "#{site_url}#{relative_url(post.data.fetch("agent_markdown_url"))}"
-        link = "- [#{link_title(post)}](#{escaped_link_url(url)})"
-        return link unless Configuration.enabled?(settings, "include_dates")
-
-        [link, date_metadata(post).to_s].reject(&:empty?).join(" | ")
       end
 
       def post_content(site, post, settings)
@@ -127,17 +139,10 @@ module Jekyll
 
       def date_metadata(post) = DateMetadata.new(post.data)
 
-      # Backslashes and square brackets would end the Markdown link text early;
-      # whitespace runs (including newlines) would break the one-entry-per-line
-      # format.
-      def link_title(post)
-        post.data.fetch("title", post.basename_without_ext)
-            .to_s.gsub(/\s+/, " ").strip
-            .gsub(/[\\\[\]]/) { |character| "\\#{character}" }
+      # Retained for the public test seam used by existing integrations.
+      def sorted_posts(posts, settings)
+        LlmsDocumentOrdering.new(settings).legacy_ordered(posts) { |post| date_metadata(post).published_date }
       end
-
-      # Unescaped parentheses would end the Markdown link destination early.
-      def escaped_link_url(url) = url.gsub("(", "%28").gsub(")", "%29")
     end
   end
 end

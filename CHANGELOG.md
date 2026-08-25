@@ -1,4 +1,11 @@
-## [Unreleased]
+## [0.4.0] - 2026-08-25
+
+- Export Markdown-backed pages and selected output collections alongside posts.
+- Add per-document export, index, section, optional, and document-header settings.
+- Curate `llms.txt` with sections and descriptions, and add optional `llms-full.txt` output.
+- Register `{% agent_markdown_link %}` and expose `agent_markdown_url` for custom layouts.
+- Package Cloudflare Workers, Netlify Edge, and nginx+njs negotiation recipes.
+- Preserve existing posts-only defaults, collision handling, raw Markdown, and metadata output.
 
 ## [0.3.1] - 2026-08-20
 

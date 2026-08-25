@@ -1,10 +1,14 @@
 # jekyll-agent-markdown
 
-Export Jekyll posts as raw Markdown next to their normal HTML output, and publish a small `llms.txt` index.
+Export Jekyll content as Markdown siblings and curated `llms.txt` and `llms-full.txt` indexes.
+
+AI agents and LLM crawlers read Markdown better than rendered HTML.
+This plugin publishes a Markdown copy of each exported post, page, and collection document next to its HTML.
+It also writes the index files described by the [llms.txt convention](https://llmstxt.org).
 
 ## Installation
 
-Add the gem to your site's `Gemfile` plugin group:
+Add the gem to your site's `Gemfile`.
 
 ```ruby
 group :jekyll_plugins do
@@ -12,44 +16,68 @@ group :jekyll_plugins do
 end
 ```
 
-Then run `bundle install` and enable it in `_config.yml`:
+Install dependencies.
+
+```sh
+bundle install
+```
+
+The `:jekyll_plugins` group already enables the plugin.
+If you keep the gem outside that group, list it under `plugins:` instead.
 
 ```yaml
 plugins:
   - jekyll-agent-markdown
 ```
 
-## Configuration
+## Quick Start
 
-Both exports are enabled by default:
-
-```yaml
-agent_markdown:
-  posts: true
-  llms_txt: true
-  sort: desc
-  include_author: true
-  include_dates: true
-```
-
-`posts`, `llms_txt`, `include_author`, and `include_dates` accept `true`, `false`, or one of the false-style strings `"false"`, `"no"`, and `"off"` (case-insensitively). `sort` accepts `asc` or `desc` and defaults to `desc`, ordering the `llms.txt` article list by normalized published date. Posts with a missing, incomplete, or invalid published date are listed last in their existing order. Unknown keys and other values stop the build with a configuration error instead of being silently ignored. An explicit per-post `agent_markdown` value follows the boolean-setting rules, so a mistyped opt-out cannot publish raw source by accident.
-
-By default, `llms.txt` and each exported article footer include the blog author's name from either a scalar Jekyll setting (`author: Jane Doe`) or a mapping (`author: { name: Jane Doe }`). If no author name is configured, the entry is omitted. Set `include_author: false` under `agent_markdown` to omit author metadata from both outputs.
-
-Set `url` to your site's absolute HTTP(S) URL; the `llms.txt` index uses it to generate absolute article links:
+Configure the sources you want and build the site.
 
 ```yaml
 url: https://example.com
+collections:
+  guides:
+    output: true
+agent_markdown:
+  pages: true
+  collections:
+    - guides
 ```
 
-When `url` is missing, contains credentials, a query, or a fragment, or is not an absolute HTTP(S) URL, `llms.txt` is skipped with a warning and the rest of the build continues. The build only fails when you set `llms_txt` explicitly in `_config.yml`, since that states clear intent.
+```sh
+bundle exec jekyll build
+```
 
-Set `agent_markdown: false` to disable both exports, or `agent_markdown: true` to enable both explicitly (same as leaving it unset). The strings `"false"`, `"no"`, and `"off"` are also treated as false, case-insensitively.
+The build now writes:
 
-Markdown sibling paths are deterministic:
+- `/llms.txt`, an index of the exported documents
+- a Markdown sibling for every post, Markdown page, and `guides` document, such as `/guides/start.md` next to `/guides/start/`
+
+## Usage
+
+Enable the sources you want.
+
+- Posts export by default.
+- Markdown-backed pages need `pages: true`.
+- Markdown collection documents need `collections` and `output: true`.
+- Non-Markdown pages, non-Markdown collection documents, and generated pages are ignored.
+- A missing or non-output collection fails the build.
+- A selected collection with a Markdown document lacking a public document URL fails.
+- The reserved `posts` collection cannot appear in `collections`.
+
+Use site-level `agent_markdown: true` to enable the defaults.
+Use site-level `agent_markdown: false` to disable every export.
+Boolean settings accept `true` and `false` scalars.
+They also accept `"false"`, `"no"`, and `"off"` as false.
+False-style strings are case-insensitive and work in front matter.
+Unknown keys, wrong types, and invalid combinations fail the build.
+Duplicate collection names also fail the build.
+
+Markdown siblings follow the permalink.
 
 | Post URL | Markdown URL |
-|---|---|
+| --- | --- |
 | `/foo/` | `/foo.md` |
 | `/foo.html`, `/foo.htm` | `/foo.md` |
 | `/foo.html/` | `/foo.html.md` |
@@ -57,34 +85,71 @@ Markdown sibling paths are deterministic:
 | `/foo` | `/foo.md` |
 | `/` | `/index.md` |
 
-Extensions are matched case-insensitively, and percent-encoded aliases are compared by their final decoded destination. Destination ownership also treats case-only and Unicode-normalization aliases as equivalent on every platform, keeping builds portable across filesystems. File-versus-directory conflicts are reserved as well. Before adding an export, the plugin checks every page, static file, and writable collection document already known to Jekyll. The existing destination owner wins; later post exports are skipped with a warning and omitted from `llms.txt`. A committed `llms.txt` wins in the same way.
-
-The generated file preserves the post's original Markdown body as its initial content, with no front matter, HTML conversion, or Liquid rendering. Liquid tags and directives such as `{{ site.title }}` are published literally. By default, the plugin appends the post's published `date`, optional `last_modified_at` value, and site author as a small footer:
+Each post export ends with a metadata footer built from the available dates and the site author.
+Disable it with `include_dates: false` and `include_author: false`.
 
 ```text
+Post body.
+
 ---
-Published at: 2026-01-01 | Updated at: 2026-02-03 | Author: Jane Doe
+Published at: 2026-01-01 | Updated at: 2026-01-05 | Author: Example Author
 ```
 
-Each available date is formatted as `YYYY-MM-DD`. String values must contain an explicit year, month, and day; missing, incomplete, and invalid values and their labels are omitted. An empty post contains only the metadata line, without a leading `---` that could be mistaken for front matter. `include_dates: false` omits dates from Markdown exports and `llms.txt` article links while leaving an author-only footer when an author is configured. `include_author: false` leaves a date-only footer. Set both options to `false` for a body-only export.
-
-Exclude one post with front matter:
+Set per-document settings in front matter.
 
 ```yaml
 agent_markdown: false
 ```
 
-Expose the alternate representation from a layout:
-
-```liquid
-{% if page.agent_markdown_url %}
-  <link rel="alternate" type="text/markdown" href="{{ page.agent_markdown_url | relative_url }}">
-{% endif %}
+```yaml
+agent_markdown:
+  export: true
+  index: true
+  section: Documentation
+  optional: false
+  include_document_header: true
 ```
 
-The conditional omits the link for opted-out and colliding posts. The `relative_url` filter adds `baseurl` for sites deployed below the domain root.
+Use `optional: true` without `section` for the `Optional` section.
+Front matter cannot enable a globally excluded source kind.
+`export: false` also disables `index`.
+Do not combine `export: false` with `index: true`.
+Do not combine `optional: true` with `section`.
 
-The generated `/llms.txt` is a compact index, for example:
+Add `include_document_header: true` to prepend a small header.
+That setting needs a valid absolute `url`.
+A valid `url` uses HTTP(S) without credentials, a query, or a fragment.
+
+The header holds the title, the front matter description when present, and a `Source:` link to the HTML page.
+The body below the divider stays untouched.
+
+```markdown
+# About this site
+
+A one-line description from front matter
+
+Source: https://example.com/about/
+
+---
+
+## What we do
+
+Raw page body.
+```
+
+Use `llms_txt: true` for the compact index.
+`llms.txt` has two layouts.
+With the posts-only defaults it keeps the original single-list layout, byte-for-byte identical with releases before 0.4.0.
+Enabling pages, collections, or descriptions, or using `section` or `optional` in front matter, switches to the sectioned layout shown below.
+
+Add `include_descriptions: true` for sanitized descriptions.
+Descriptions fall back to the document excerpt.
+Use `sort: asc` or `sort: desc` for each section.
+Set `include_author: false` or `include_dates: false` to trim metadata.
+Mark a document `optional: true` to move it under `Optional`.
+Default sections appear before custom sections.
+Custom sections keep their first-occurrence order.
+The `Optional` section always appears last.
 
 ```text
 # Example Site
@@ -95,24 +160,133 @@ Author: Example Author
 
 ## Articles
 
-> Posts only. Pages and collections are not included.
-
 - [First article](https://example.com/articles/first.md) | Published at: 2026-01-01
+
+## Pages
+
+- [About](https://example.com/about.md): About page
+
+## Guides
+
+- [Getting started](https://example.com/guides/start.md)
+
+## Optional
+
+- [Reference](https://example.com/reference.md)
 ```
 
-## Deployment notes
+Use `llms_full_txt: true` for the full index.
+It uses the same document selection as `llms.txt`.
+It still works when `llms_txt: false`.
+Each entry expands into a full Markdown document block.
+Set `url` to a valid absolute HTTP(S) URL first.
+The generator warns once when the rendered file exceeds 1 MiB.
 
-Configure your host to serve generated `.md` files as `Content-Type: text/markdown; charset=utf-8` and, when appropriate, `X-Robots-Tag: noindex`. This gem writes files only; it cannot set HTTP response headers. Generated files refuse to write through symlinks inside the destination. GitHub Pages safe mode may not run arbitrary plugins, so use a separate build/deploy pipeline there.
+```text
+# Example Site
 
-## v0.1.0 limitations
+## Articles
 
-Only posts are exported. Pages and custom collections, custom Markdown transformations or templates, front-matter allowlisting, automatic response headers, sitemaps, and richer article metadata are intentionally deferred.
+### [First article](https://example.com/articles/first.md)
+
+Source: https://example.com/articles/first/
+
+Body of the first article.
+```
+
+Add the alternate link from a layout.
+
+```liquid
+{% agent_markdown_link %}
+```
+
+It renders a discovery link for the current page.
+
+```html
+<link rel="alternate" type="text/markdown" href="/about.md">
+```
+
+The tag is baseurl-aware.
+It is empty for opted-out or collided documents.
+Use `page.agent_markdown_url` when custom markup needs the generated path.
+
+On collision, existing destinations win.
+Generated claims run through posts, then pages, then configured collections.
+Later exports skip with a warning and receive no `agent_markdown_url`.
+They are also omitted from both indexes.
+A committed `llms.txt` or `llms-full.txt` also wins on collision.
+Collision detection only sees files Jekyll knows about when this plugin runs at `priority :low`.
+Another plugin generating files at `priority :lowest` runs later and can still claim the same destination.
+
+## Options
+
+Boolean settings accept `true`, `false`, and false-style strings.
+Unknown keys and invalid values raise `Jekyll::Errors::FatalException`.
+
+These are the complete defaults.
+
+```yaml
+agent_markdown:
+  posts: true
+  pages: false
+  collections: []
+  llms_txt: true
+  llms_full_txt: false
+  include_descriptions: false
+  include_document_header: false
+  include_author: true
+  include_dates: true
+  sort: desc
+```
+
+| Option | Default | Notes |
+| --- | --- | --- |
+| `posts` | `true` | Export posts. |
+| `pages` | `false` | Export pages. |
+| `collections` | `[]` | Export output collections named here. |
+| `llms_txt` | `true` | Write `llms.txt`. |
+| `llms_full_txt` | `false` | Write `llms-full.txt`. |
+| `include_descriptions` | `false` | Append sanitized descriptions to `llms.txt`. |
+| `include_document_header` | `false` | Prepend document headers to Markdown exports. |
+| `include_author` | `true` | Include author metadata. |
+| `include_dates` | `true` | Include published and updated dates. |
+| `sort` | `desc` | Order each section by normalized publish date. |
+
+The default `llms_txt` warns and skips when `url` is missing or invalid.
+Explicitly configuring `llms_txt` makes an invalid `url` fatal.
+`llms_full_txt` needs a valid absolute `url` whenever enabled.
+Document headers enforce the same URL rules only when enabled.
+
+## Compatibility
+
+Ruby 3.2 or newer is required.
+Jekyll 4.3 or newer is required, but Jekyll 5 is unsupported.
+The plugin writes files only.
+There is no automatic injection into rendered HTML.
+Layouts must invoke `{% agent_markdown_link %}` explicitly.
+It does not handle content negotiation; see [examples/](examples/) for Cloudflare Workers, Netlify Edge, and nginx recipes.
+It does not generate crawler policy, analytics, middleware, response headers, or crawler permissions.
+It publishes raw Markdown without rendering Liquid.
+Post exports append enabled date and author metadata.
+Document headers prepend content only when enabled.
+Destination ownership is normalized across case, Unicode normalization, encoded aliases, and file-versus-directory conflicts.
+See the [deployment guide](docs/deployment.md) for host setup.
+
+### Limitations
+
+Page and collection exports require authored Markdown and public URLs.
+Generated pages and non-Markdown page or collection sources are ignored.
+Raw Liquid may expose source directives to Markdown readers.
+GitHub Pages safe mode may require an external build pipeline.
 
 ## Development
 
-Run `bundle exec rake` after `bundle install` to execute both Minitest and RuboCop.
+Run the tests and RuboCop.
 
-The entry point explicitly loads the plugin's small implementation tree without an additional runtime loader dependency. Implementation files also declare their own prerequisites so public constants can be required directly in isolation.
+```sh
+bundle install
+bundle exec rake
+```
 
 ## License
 

@@ -1,5 +1,6 @@
 /.bundle/
 /.ruby-lsp/
+/.worktrees/
 /.yardoc
 /_yardoc/
 /coverage/
@@ -7,3 +8,4 @@
 /pkg/
 /spec/reports/
 /tmp/
+/Gemfile.lock

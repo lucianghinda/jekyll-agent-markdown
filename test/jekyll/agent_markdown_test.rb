@@ -109,6 +109,29 @@ class TestDateMutationGenerator < Jekyll::Generator
   end
 end
 
+class TestGeneratedPageGenerator < Jekyll::Generator
+  priority :normal
+
+  def generate(site)
+    return unless site.config["test_generated_page"]
+
+    page = Jekyll::PageWithoutAFile.new(site, site.source, "", "generated.md")
+    page.content = "Generated page body."
+    page.data["permalink"] = "/generated/"
+    site.pages << page
+  end
+end
+
+class TestUrlLessCollectionDocumentGenerator < Jekyll::Generator
+  priority :normal
+
+  def generate(site)
+    return unless site.config["test_url_less_collection_document"]
+
+    site.collections.fetch("guides").docs.first.define_singleton_method(:url) { nil }
+  end
+end
+
 class AgentMarkdownGeneratorTest < Minitest::Test
   POST_BODY = "# First heading\n\n*Raw* Markdown body.\n\n{{ site.title }}"
 
@@ -329,6 +352,20 @@ class AgentMarkdownGeneratorTest < Minitest::Test
     end
   end
 
+  def test_default_llms_txt_preserves_legacy_order_when_dates_match
+    same_date_post = post("Same-date article", "/articles/same-date/")
+
+    with_site(extra_posts: { "2026-01-01-same-date.md" => same_date_post }) do |site, destination|
+      site.process
+      legacy_order = site.posts.docs
+                         .sort_by { |post| post.data.fetch("date") }
+                         .reverse
+                         .map { |post| post.data.fetch("title") }
+
+      assert_order File.binread(File.join(destination, "llms.txt")), *legacy_order
+    end
+  end
+
   def test_sorts_dates_normalized_after_an_earlier_generator_mutates_post_data
     posts = {
       "2026-01-02-february.md" => post("February article", "/articles/february/"),
@@ -390,6 +427,16 @@ class AgentMarkdownGeneratorTest < Minitest::Test
     )
 
     assert_equal [dated, first_undated, second_undated], sorted
+  end
+
+  def test_preserves_legacy_descending_post_order_when_dates_match
+    post = Struct.new(:name, :data)
+    first = post.new("first", { "date" => Time.utc(2026, 1, 1) })
+    second = post.new("second", { "date" => Time.utc(2026, 1, 1) })
+
+    sorted = Jekyll::AgentMarkdown::Generator.new.send(:sorted_posts, [first, second], {})
+
+    assert_equal %w[second first], sorted.map(&:name)
   end
 
   def test_generates_absolute_urls_when_baseurl_is_nil
@@ -807,7 +854,7 @@ class AgentMarkdownGeneratorTest < Minitest::Test
   end
 
   def test_rejects_invalid_per_post_configuration_values
-    ["flase", 0, {}, []].each_with_index do |value, index|
+    ["flase", 0, []].each_with_index do |value, index|
       name = format("2026-01-%02d-invalid.md", index + 2)
       posts = { name => post_with_agent_markdown("Invalid post setting", "/invalid-#{index}/", value) }
 
@@ -819,7 +866,7 @@ class AgentMarkdownGeneratorTest < Minitest::Test
     end
   end
 
-  def test_generates_an_empty_article_list_when_no_posts_are_included
+  def test_omits_the_article_section_entirely_when_posts_are_disabled
     with_site(config: { "agent_markdown" => { "posts" => false } }) do |site, destination|
       site.process
 
@@ -829,11 +876,858 @@ class AgentMarkdownGeneratorTest < Minitest::Test
         > A short description
 
         Author: Example Author
-
-        ## Articles
-
-        > Posts only. Pages and collections are not included.
       TEXT
+    end
+  end
+
+  def test_exports_authored_markdown_pages_only_when_pages_are_enabled
+    page = <<~PAGE
+      ---
+      title: About us
+      permalink: /about/
+      ---
+      Raw page body.
+    PAGE
+
+    with_site(extra_files: { "about.md" => page }) do |site, destination|
+      site.process
+
+      refute_path_exists File.join(destination, "about.md")
+      assert_nil site.pages.find { |candidate| candidate.url == "/about/" }.data["agent_markdown_url"]
+    end
+
+    with_site(config: { "agent_markdown" => { "pages" => true } },
+              extra_files: { "about.md" => page }) do |site, destination|
+      site.process
+
+      assert_path_exists File.join(destination, "about.md")
+      assert_equal "Raw page body.\n", File.binread(File.join(destination, "about.md"))
+      assert_equal "/about.md", site.pages.find { |candidate| candidate.url == "/about/" }.data["agent_markdown_url"]
+    end
+  end
+
+  def test_rejects_posts_as_a_configured_collection_regardless_of_post_setting
+    [true, false].each do |posts|
+      error = assert_raises(Jekyll::Errors::FatalException) do
+        with_site(config: { "agent_markdown" => { "posts" => posts, "collections" => ["posts"] } }) do |site|
+          site.process
+        end
+      end
+
+      assert_match(/collections.*posts.*agent_markdown\.posts/i, error.message)
+    end
+  end
+
+  def test_exported_document_html_urls_are_baseurl_aware_without_valid_site_urls
+    page = authored_document("About", "/about/")
+
+    {
+      nil => "/blog/about/",
+      "example.test/path" => "/blog/about/",
+      "https://docs.example.test/" => "https://docs.example.test/blog/about/"
+    }.each do |site_url, expected_html_url|
+      with_site(
+        config: { "url" => site_url, "agent_markdown" => { "pages" => true, "llms_txt" => false } },
+        extra_files: { "about.md" => page }
+      ) do |site|
+        site.process
+
+        page_export = agent_generator(site).exported_documents.find { |exported| exported.source_kind == :page }
+
+        assert_equal expected_html_url, page_export.html_url
+      end
+    end
+  end
+
+  def test_exports_markdown_documents_from_configured_output_enabled_collections
+    guide = <<~GUIDE
+      ---
+      title: First guide
+      permalink: /guides/first/
+      ---
+      Raw guide body.
+    GUIDE
+    config = {
+      "collections" => { "guides" => { "output" => true } },
+      "agent_markdown" => { "collections" => ["guides"] }
+    }
+
+    with_site(config: config, extra_files: { "_guides/first.md" => guide }) do |site, destination|
+      site.process
+
+      document = site.collections.fetch("guides").docs.first
+
+      assert_equal "Raw guide body.\n", File.binread(File.join(destination, "guides", "first.md"))
+      assert_equal "/guides/first.md", document.data["agent_markdown_url"]
+    end
+  end
+
+  def test_ignores_non_markdown_and_plugin_generated_pages
+    html = "<h1>Authored HTML page</h1>\n"
+
+    with_site(
+      config: { "agent_markdown" => { "pages" => true }, "test_generated_page" => true },
+      extra_files: { "authored.html" => html }
+    ) do |site, destination|
+      site.process
+
+      refute_path_exists File.join(destination, "authored.md")
+      refute_path_exists File.join(destination, "generated.md")
+      assert_nil site.pages.find { |page| page.url == "/generated/" }.data["agent_markdown_url"]
+    end
+  end
+
+  def test_traverses_collections_in_configured_order_after_pages
+    shared_page = authored_document("Page winner", "/shared/")
+    guide = authored_document("Guide loser", "/shared.html")
+    reference = authored_document("Reference loser", "/shared/")
+    config = {
+      "collections" => { "guides" => { "output" => true }, "references" => { "output" => true } },
+      "agent_markdown" => { "pages" => true, "collections" => %w[guides references] }
+    }
+
+    with_site(
+      config: config,
+      extra_files: { "shared.md" => shared_page, "_guides/guide.md" => guide, "_references/reference.md" => reference }
+    ) do |site, destination|
+      site.process
+
+      assert_includes File.binread(File.join(destination, "shared.md")), "Page winner"
+      assert_nil site.collections.fetch("guides").docs.first.data["agent_markdown_url"]
+      assert_nil site.collections.fetch("references").docs.first.data["agent_markdown_url"]
+      assert_equal(["_posts/2026-01-01-first.md", "shared.md"],
+                   agent_generator(site).exported_documents.map { |item| item.source_document.relative_path })
+    end
+  end
+
+  def test_configured_collections_must_exist_and_be_output_enabled
+    missing = assert_raises(Jekyll::Errors::FatalException) do
+      with_site(config: { "agent_markdown" => { "collections" => ["missing"] } }) { |site| site.process }
+    end
+    assert_match(/collections.*missing.*does not exist/i, missing.message)
+
+    disabled = assert_raises(Jekyll::Errors::FatalException) do
+      with_site(
+        config: { "collections" => { "guides" => {} }, "agent_markdown" => { "collections" => ["guides"] } },
+        extra_files: { "_guides/first.md" => authored_document("Guide", "/guides/first/") }
+      ) { |site| site.process }
+    end
+    assert_match(/guides.*output is disabled/i, disabled.message)
+  end
+
+  def test_configured_collection_documents_must_have_public_urls
+    config = {
+      "collections" => { "guides" => { "output" => true } },
+      "agent_markdown" => { "collections" => ["guides"] }
+    }
+    guide = authored_document("URL-less guide", "/guides/external/")
+
+    error = assert_raises(Jekyll::Errors::FatalException) do
+      with_site(
+        config: config.merge("test_url_less_collection_document" => true),
+        extra_files: { "_guides/external.md" => guide }
+      ) { |site| site.process }
+    end
+
+    assert_match(%r{_guides/external\.md}, error.message)
+    assert_match(/guides.*public document URL/i, error.message)
+  end
+
+  def test_document_export_and_index_settings_respect_global_exclusions
+    page = <<~PAGE
+      ---
+      title: Excluded page
+      permalink: /excluded/
+      agent_markdown:
+        export: true
+        index: true
+      ---
+      Excluded body.
+    PAGE
+    post = <<~POST
+      ---
+      layout: post
+      title: Unindexed post
+      permalink: /unindexed/
+      agent_markdown:
+        index: false
+      ---
+      Unindexed body.
+    POST
+
+    with_site(extra_files: { "excluded.md" => page },
+              extra_posts: { "2026-01-02-unindexed.md" => post }) do |site, destination|
+      site.process
+
+      refute_path_exists File.join(destination, "excluded.md")
+      assert_path_exists File.join(destination, "unindexed.md")
+      refute_includes File.binread(File.join(destination, "llms.txt")), "Unindexed post"
+      refute agent_generator(site).exported_documents.last.index
+    end
+  end
+
+  def test_document_export_opt_out_prevents_an_enabled_page_from_being_recorded
+    page = <<~PAGE
+      ---
+      title: Opted out page
+      permalink: /opted-out/
+      agent_markdown:
+        export: false
+      ---
+      Body.
+    PAGE
+
+    with_site(
+      config: { "agent_markdown" => { "pages" => true } },
+      extra_files: { "opted-out.md" => page }
+    ) do |site, destination|
+      site.process
+
+      page = site.pages.find { |candidate| candidate.url == "/opted-out/" }
+
+      refute_path_exists File.join(destination, "opted-out.md")
+      assert_nil page.data["agent_markdown_url"]
+      refute_includes agent_generator(site).exported_documents.map(&:source_document), page
+    end
+  end
+
+  def test_collided_page_export_is_not_advertised_or_recorded
+    page = authored_document("Collision", "/%65xisting/")
+
+    with_site(
+      config: { "agent_markdown" => { "pages" => true } },
+      extra_files: { "existing.md" => "Author supplied\n", "collision.md" => page }
+    ) do |site, destination|
+      site.process
+
+      collided_page = site.pages.find { |candidate| candidate.relative_path == "collision.md" }
+
+      assert_equal "Author supplied\n", File.binread(File.join(destination, "existing.md"))
+      assert_nil collided_page.data["agent_markdown_url"]
+      refute_includes agent_generator(site).exported_documents.map(&:source_document), collided_page
+    end
+  end
+
+  def test_prepends_document_headers_with_baseurl_aware_canonical_urls
+    page = <<~PAGE
+      ---
+      title: "Title: [special]"
+      description: "A\\ndescription *kept*"
+      permalink: /about/
+      ---
+      # Title: [special]
+      Raw page body.
+    PAGE
+
+    with_site(
+      config: { "agent_markdown" => { "pages" => true, "include_document_header" => true } },
+      extra_files: { "about.md" => page }
+    ) do |site, destination|
+      site.process
+
+      assert_equal <<~MARKDOWN, File.binread(File.join(destination, "about.md"))
+        # Title: [special]
+
+        A description *kept*
+
+        Source: https://example.test/blog/about/
+
+        ---
+
+        # Title: [special]
+        Raw page body.
+      MARKDOWN
+    end
+  end
+
+  def test_document_header_can_be_enabled_per_document_and_requires_a_valid_site_url
+    page = <<~PAGE
+      ---
+      permalink: /about/
+      agent_markdown:
+        include_document_header: true
+      ---
+      Body.
+    PAGE
+
+    with_site(
+      config: { "agent_markdown" => { "pages" => true, "llms_txt" => false } },
+      extra_files: { "about.md" => page }
+    ) do |site, destination|
+      site.process
+
+      assert_includes File.binread(File.join(destination, "about.md")), "# about"
+    end
+
+    error = assert_raises(Jekyll::Errors::FatalException) do
+      with_site(
+        config: { "url" => "example.test/path", "agent_markdown" => { "pages" => true, "llms_txt" => false } },
+        extra_files: { "about.md" => page }
+      ) { |site| site.process }
+    end
+    assert_match(/about\.md.*document headers.*absolute HTTP/i, error.message)
+
+    missing_url = assert_raises(Jekyll::Errors::FatalException) do
+      with_site(
+        config: { "url" => nil, "agent_markdown" => { "pages" => true, "llms_txt" => false } },
+        extra_files: { "about.md" => page }
+      ) { |site| site.process }
+    end
+    assert_match(/about\.md.*document headers.*absolute HTTP/i, missing_url.message)
+  end
+
+  def test_document_headers_do_not_require_site_url_when_disabled_and_empty_sources_are_safe
+    page = <<~PAGE
+      ---
+      permalink: /empty/
+      ---
+    PAGE
+
+    with_site(
+      config: { "url" => nil, "agent_markdown" => { "pages" => true, "llms_txt" => false } },
+      extra_files: { "empty.md" => page }
+    ) do |site, destination|
+      site.process
+
+      assert_equal "", File.binread(File.join(destination, "empty.md"))
+    end
+  end
+
+  def test_curated_llms_txt_groups_pages_and_collections_in_default_section_order
+    config = {
+      "collections" => { "guides" => { "output" => true }, "api_references" => { "output" => true } },
+      "agent_markdown" => { "pages" => true, "collections" => %w[guides api_references] }
+    }
+
+    with_site(
+      config: config,
+      extra_files: {
+        "about.md" => authored_document("About", "/about/"),
+        "_guides/start.md" => authored_document("Getting started", "/guides/start/"),
+        "_api_references/widget.md" => authored_document("Widget API", "/api/widget/")
+      }
+    ) do |site, destination|
+      site.process
+
+      llms_txt = File.binread(File.join(destination, "llms.txt"))
+
+      assert_order llms_txt, "## Articles", "## Pages", "## Guides", "## Api References"
+      assert_includes llms_txt, "[About](https://example.test/blog/about.md)"
+      assert_includes llms_txt, "[Getting started](https://example.test/blog/guides/start.md)"
+      refute_includes llms_txt, "Posts only."
+    end
+  end
+
+  def test_curated_llms_txt_orders_custom_sections_and_optional_documents_and_normalizes_descriptions
+    pages = {
+      "intro.md" => <<~PAGE,
+        ---
+        title: Intro
+        permalink: /intro/
+        description: "*First* <em>description</em>\n## Not a heading"
+        agent_markdown:
+          section: Learn
+        ---
+        Intro body.
+      PAGE
+      "reference.md" => <<~PAGE,
+        ---
+        title: Reference
+        permalink: /reference/
+        excerpt: "Excerpt with **Markdown** and <b>HTML</b>."
+        agent_markdown:
+          section: Reference
+        ---
+        Excerpt with **Markdown** and <b>HTML</b>.
+      PAGE
+      "optional.md" => <<~PAGE,
+        ---
+        title: Optional page
+        permalink: /optional/
+        agent_markdown:
+          optional: true
+        ---
+        Optional body.
+      PAGE
+      "hidden.md" => <<~PAGE
+        ---
+        title: Hidden page
+        permalink: /hidden/
+        agent_markdown:
+          index: false
+        ---
+        Hidden body.
+      PAGE
+    }
+
+    with_site(config: { "agent_markdown" => { "pages" => true, "include_descriptions" => true } },
+              extra_files: pages) do |site, destination|
+      site.process
+
+      llms_txt = File.binread(File.join(destination, "llms.txt"))
+
+      assert_order llms_txt, "## Articles", "## Learn", "## Reference", "## Optional"
+      assert_includes llms_txt, "[Intro](https://example.test/blog/intro.md): First description \\#\\# Not a heading"
+      assert_includes llms_txt, "[Reference](https://example.test/blog/reference.md): Excerpt with Markdown and HTML."
+      refute_match(/^## Not a heading$/, llms_txt)
+      refute_includes llms_txt, "Hidden page"
+    end
+  end
+
+  def test_curated_llms_txt_descriptions_do_not_allow_encoded_markup_or_line_injection
+    page = <<~PAGE
+      ---
+      title: Safe description
+      permalink: /safe-description/
+      description: "First&#10;- injected list ## injected heading &lt;script&gt;alert('bad')&lt;/script&gt; <b>kept</b>"
+      ---
+      Body.
+    PAGE
+
+    with_site(
+      config: { "agent_markdown" => { "pages" => true, "include_descriptions" => true } },
+      extra_files: { "safe-description.md" => page }
+    ) do |site, destination|
+      site.process
+
+      description_line = File.binread(File.join(destination, "llms.txt")).lines.grep(/Safe description/).first
+
+      expected_description = "- [Safe description](https://example.test/blog/safe-description.md)" \
+                             ": First injected list \\#\\# injected heading kept\n"
+
+      assert_equal expected_description, description_line
+      refute_includes description_line, "<script>"
+      refute_includes description_line, "alert"
+      refute_match(/^\s*-\s+injected/, File.binread(File.join(destination, "llms.txt")))
+    end
+  end
+
+  def test_curated_llms_txt_escapes_sanitized_descriptions_before_final_markdown_parsing
+    page = <<~PAGE
+      ---
+      title: Escaped description
+      permalink: /escaped-description/
+      description: '\\*not italic\\* \\[safe\\](javascript:alert(1)) \\`not code\\` &lt;img src=x onerror=alert(1)&gt;'
+      ---
+      Body.
+    PAGE
+
+    with_site(
+      config: { "agent_markdown" => { "pages" => true, "include_descriptions" => true } },
+      extra_files: { "escaped-description.md" => page }
+    ) do |site, destination|
+      site.process
+
+      entry = File.binread(File.join(destination, "llms.txt")).lines.grep(/Escaped description/).first
+      rendered_description = site.find_converter_instance(Jekyll::Converters::Markdown).convert(entry.split(": ",
+                                                                                                            2).last)
+
+      assert_includes rendered_description, "not italic"
+      assert_includes rendered_description, "safe"
+      refute_match(/<(?:a|em|strong|code|img)\b/i, rendered_description)
+    end
+  end
+
+  def test_curated_section_names_are_safe_single_line_literal_headings_in_both_outputs
+    page = <<~PAGE
+      ---
+      title: Sectioned page
+      permalink: /sectioned/
+      agent_markdown:
+        section: "Learn\n## Injected [link](https://bad.test) `code` *em*"
+      ---
+      Body.
+    PAGE
+    config = { "agent_markdown" => { "pages" => true, "llms_full_txt" => true } }
+
+    with_site(config:, extra_files: { "sectioned.md" => page }) do |site, destination|
+      site.process
+
+      ["llms.txt", "llms-full.txt"].each do |filename|
+        output = File.binread(File.join(destination, filename))
+        heading = output.lines.grep(/Learn/).first
+
+        assert_includes heading, "\\[link\\]\\(https://bad.test\\)"
+        assert_includes heading, "\\`code\\`"
+        refute_match(/^## Injected$/, output)
+      end
+    end
+  end
+
+  def test_curated_indexes_merge_colliding_section_names_and_keep_compact_full_parity
+    config = {
+      "collections" => { "api_refs" => { "output" => true }, "api-refs" => { "output" => true } },
+      "agent_markdown" => { "pages" => true, "collections" => %w[api_refs api-refs], "llms_full_txt" => true }
+    }
+    files = {
+      "article-page.md" => sectioned_document("Article page", "/article-page/", "articles"),
+      "api-alias.md" => sectioned_document("API alias", "/api-alias/", "api-refs"),
+      "equal-one.md" => dated_document("Equal one", "/equal-one/", "2026-02-01"),
+      "equal-two.md" => dated_document("Equal two", "/equal-two/", "2026-02-01"),
+      "hidden.md" => <<~PAGE,
+        ---
+        title: Hidden parity page
+        permalink: /hidden-parity/
+        agent_markdown:
+          index: false
+        ---
+        Hidden body.
+      PAGE
+      "optional-page.md" => sectioned_document("Optional page", "/optional-page/", "optional"),
+      "_api_refs/under.md" => authored_document("Under API", "/under-api/"),
+      "_api-refs/dash.md" => authored_document("Dash API", "/dash-api/")
+    }
+
+    with_site(config:, extra_files: files) do |site, destination|
+      site.process
+
+      compact = File.binread(File.join(destination, "llms.txt"))
+      full = File.binread(File.join(destination, "llms-full.txt"))
+
+      assert_equal [1, 1], [compact.lines.count { |line| line == "## Articles\n" },
+                            compact.lines.count { |line| line == "## Api Refs\n" }]
+      assert_equal compact_index_identity(compact), full_index_identity(full)
+      assert_equal compact_index_identity(compact).uniq, compact_index_identity(compact)
+      assert_order compact, "Equal one", "Equal two"
+      refute_includes compact, "Hidden parity page"
+      assert_includes compact, "API alias"
+    end
+  end
+
+  def test_posts_only_full_index_keeps_the_compact_legacy_tie_order
+    same_date_post = post("Same-date article", "/articles/same-date/")
+    config = { "agent_markdown" => { "llms_full_txt" => true } }
+
+    with_site(config:, extra_posts: { "2026-01-01-same-date.md" => same_date_post }) do |site, destination|
+      site.process
+      compact = File.binread(File.join(destination, "llms.txt"))
+      full = File.binread(File.join(destination, "llms-full.txt"))
+
+      assert_equal compact_index_identity(compact), full_index_identity(full)
+    end
+  end
+
+  def test_collided_oversized_llms_full_txt_warns_only_about_the_collision
+    body = "x" * 1_048_576
+    page = "---\ntitle: Large\npermalink: /large/\n---\n#{body}"
+
+    with_site(
+      config: { "agent_markdown" => { "posts" => false, "pages" => true, "llms_txt" => false,
+                                      "llms_full_txt" => true } },
+      extra_files: { "large.md" => page, "llms-full.txt" => "authored\n" }
+    ) do |site|
+      messages = messages_logged { site.process }
+
+      assert_equal(1, messages.count { |message| message.include?("skipping /llms-full.txt") })
+      refute(messages.any? { |message| message.include?("llms-full.txt exceeds") })
+    end
+  end
+
+  def test_curated_llms_txt_sorts_dates_stably_within_each_section
+    pages = {
+      "undated.md" => authored_document("Undated", "/undated/"),
+      "same-first.md" => dated_document("Same first", "/same-first/", "2026-02-01"),
+      "same-second.md" => dated_document("Same second", "/same-second/", "2026-02-01"),
+      "older.md" => dated_document("Older", "/older/", "2026-01-01")
+    }
+
+    %w[asc desc].each do |sort|
+      with_site(config: { "agent_markdown" => { "pages" => true, "sort" => sort } },
+                extra_files: pages) do |site, destination|
+        site.process
+        llms_txt = File.binread(File.join(destination, "llms.txt"))
+        expected = if sort == "asc"
+                     ["Older", "Same first", "Same second", "Undated"]
+                   else
+                     ["Same first", "Same second", "Older", "Undated"]
+                   end
+
+        assert_order llms_txt, *expected.map { |title| title.tr("\\", "") }
+      end
+    end
+  end
+
+  def test_curated_llms_txt_omits_unindexed_unexported_and_collided_documents
+    pages = {
+      "visible.md" => authored_document("Visible", "/visible/"),
+      "unindexed.md" => <<~PAGE,
+        ---
+        title: Unindexed
+        permalink: /unindexed/
+        agent_markdown:
+          index: false
+        ---
+        Body.
+      PAGE
+      "unexported.md" => <<~PAGE,
+        ---
+        title: Unexported
+        permalink: /unexported/
+        agent_markdown:
+          export: false
+        ---
+        Body.
+      PAGE
+      "collided.md" => authored_document("Collided", "/existing/")
+    }
+
+    with_site(
+      config: { "agent_markdown" => { "pages" => true } },
+      extra_files: pages.merge("existing.md" => "Authored content\n")
+    ) do |site, destination|
+      site.process
+
+      llms_txt = File.binread(File.join(destination, "llms.txt"))
+
+      assert_includes llms_txt, "Visible"
+      refute_includes llms_txt, "Unindexed"
+      refute_includes llms_txt, "Unexported"
+      refute_includes llms_txt, "Collided"
+    end
+  end
+
+  def test_generates_llms_full_txt_from_the_same_curated_index_when_llms_txt_is_disabled
+    page = <<~PAGE
+      ---
+      title: About
+      permalink: /about/
+      ---
+      # About body
+    PAGE
+
+    with_site(
+      config: { "agent_markdown" => { "pages" => true, "llms_txt" => false, "llms_full_txt" => true } },
+      extra_files: { "about.md" => page }
+    ) do |site, destination|
+      site.process
+
+      refute_path_exists File.join(destination, "llms.txt")
+      full = File.binread(File.join(destination, "llms-full.txt"))
+
+      assert_order full, "## Articles", "First article", "## Pages", "About"
+      assert_includes full, "### [About](https://example.test/blog/about.md)"
+      assert_includes full, "Source: https://example.test/blog/about/"
+      assert_includes full, "# About body\n"
+    end
+  end
+
+  def test_llms_full_txt_requires_a_valid_url_when_explicitly_enabled
+    error = assert_raises(Jekyll::Errors::FatalException) do
+      with_site(config: { "url" => nil, "agent_markdown" => { "llms_full_txt" => true } }) { |site| site.process }
+    end
+
+    assert_match(/url.*required.*agent_markdown\.llms_full_txt/i, error.message)
+  end
+
+  def test_does_not_generate_llms_full_txt_unless_enabled_and_handles_an_empty_index
+    with_site(config: { "agent_markdown" => { "posts" => false, "llms_txt" => false } }) do |site, destination|
+      site.process
+
+      refute_path_exists File.join(destination, "llms-full.txt")
+    end
+
+    with_site(config: { "agent_markdown" => { "posts" => false, "llms_txt" => false,
+                                              "llms_full_txt" => true } }) do |site, destination|
+      site.process
+
+      assert_equal "# Example Site\n", File.binread(File.join(destination, "llms-full.txt"))
+    end
+  end
+
+  def test_llms_full_txt_preserves_authored_collision_independently_from_llms_txt
+    with_site(
+      config: { "agent_markdown" => { "llms_full_txt" => true } },
+      extra_files: { "llms.txt" => "authored index\n", "llms-full.txt" => "authored full\n" }
+    ) do |site, destination|
+      site.process
+
+      assert_equal "authored index\n", File.binread(File.join(destination, "llms.txt"))
+      assert_equal "authored full\n", File.binread(File.join(destination, "llms-full.txt"))
+    end
+  end
+
+  def test_llms_text_file_collisions_do_not_suppress_the_other_generated_index
+    with_site(
+      config: { "agent_markdown" => { "llms_full_txt" => true } },
+      extra_files: { "llms.txt" => "authored index\n" }
+    ) do |site, destination|
+      site.process
+
+      assert_equal "authored index\n", File.binread(File.join(destination, "llms.txt"))
+      assert_path_exists File.join(destination, "llms-full.txt")
+    end
+
+    with_site(
+      config: { "agent_markdown" => { "llms_full_txt" => true } },
+      extra_files: { "llms-full.txt" => "authored full\n" }
+    ) do |site, destination|
+      site.process
+
+      assert_path_exists File.join(destination, "llms.txt")
+      assert_equal "authored full\n", File.binread(File.join(destination, "llms-full.txt"))
+    end
+  end
+
+  def test_llms_full_txt_warns_only_when_rendered_output_exceeds_one_mebibyte
+    config = { "agent_markdown" => { "posts" => false, "pages" => true, "llms_txt" => false, "llms_full_txt" => true } }
+    page = ->(body) { "---\ntitle: Large\npermalink: /large/\n---\n#{body}" }
+    baseline = nil
+
+    with_site(config:, extra_files: { "large.md" => page.call("x\n") }) do |site, destination|
+      site.process
+      baseline = File.binread(File.join(destination, "llms-full.txt")).bytesize
+    end
+
+    exact_body = "x" * (1_048_576 - baseline + 2)
+    with_site(config:, extra_files: { "large.md" => page.call(exact_body) }) do |site, destination|
+      messages = messages_logged { site.process }
+
+      assert_equal 1_048_576, File.binread(File.join(destination, "llms-full.txt")).bytesize
+      refute(messages.any? { |message| message.include?("llms-full.txt") && message.match?(/1\s*MiB|size/i) })
+    end
+
+    with_site(config:, extra_files: { "large.md" => page.call("#{exact_body}x") }) do |site|
+      messages = messages_logged { site.process }
+
+      assert_equal(1, messages.count { |message| message.include?("llms-full.txt") && message.match?(/1\s*MiB|size/i) })
+    end
+  end
+
+  def test_disabled_posts_are_never_parsed_for_per_post_settings
+    posts = { "2026-01-02-typo.md" => opted_out_post("Typo", "/articles/typo/", "flase") }
+    config = { "agent_markdown" => { "posts" => false, "llms_txt" => false } }
+
+    with_site(config: config, extra_posts: posts) do |site, destination|
+      site.process
+
+      refute_path_exists File.join(destination, "articles", "typo.md")
+    end
+  end
+
+  def test_disabled_posts_ignore_a_setting_combination_that_could_never_apply
+    conflicting = <<~POST
+      ---
+      layout: post
+      title: Conflicting
+      permalink: /articles/conflicting/
+      agent_markdown:
+        export: false
+        index: true
+      ---
+      # Conflicting
+    POST
+    config = { "agent_markdown" => { "posts" => false, "llms_txt" => false } }
+
+    with_site(config: config, extra_posts: { "2026-01-02-conflicting.md" => conflicting }) do |site, destination|
+      site.process
+
+      refute_path_exists File.join(destination, "articles", "conflicting.md")
+    end
+  end
+
+  def test_an_opted_out_document_does_not_keep_an_authored_agent_markdown_url
+    authored = <<~POST
+      ---
+      layout: post
+      title: Authored url
+      permalink: /articles/authored/
+      agent_markdown: false
+      agent_markdown_url: /articles/forged.md
+      ---
+      # Authored url
+    POST
+
+    with_site(extra_posts: { "2026-01-02-authored.md" => authored }) do |site, destination|
+      site.process
+
+      assert_nil post_with_title(site, "Authored url").data["agent_markdown_url"]
+      rendered = File.binread(File.join(destination, "articles", "authored", "index.html"))
+
+      refute_includes rendered, "forged.md"
+    end
+  end
+
+  def test_a_collided_document_does_not_keep_an_authored_agent_markdown_url
+    authored = <<~POST
+      ---
+      layout: post
+      title: Collided url
+      permalink: /existing/
+      agent_markdown_url: /articles/forged.md
+      ---
+      # Collided url
+    POST
+    extra_files = { "existing.md" => "---\ntitle: Existing\npermalink: /existing.md\n---\n" }
+
+    with_site(extra_posts: { "2026-01-02-collided.md" => authored }, extra_files: extra_files) do |site, destination|
+      site.process
+
+      assert_nil post_with_title(site, "Collided url").data["agent_markdown_url"]
+      rendered = File.binread(File.join(destination, "existing", "index.html"))
+
+      refute_includes rendered, "forged.md"
+    end
+  end
+
+  def test_descriptions_cannot_forge_the_generated_date_metadata_separator
+    forged = <<~POST
+      ---
+      layout: post
+      title: Forged
+      permalink: /articles/forged/
+      description: "Draft `|` Published at: 1970-01-01"
+      ---
+      # Forged
+    POST
+    config = { "agent_markdown" => { "include_descriptions" => true } }
+
+    with_site(config: config, extra_posts: { "2026-01-02-forged.md" => forged }) do |site, destination|
+      site.process
+      llms = File.binread(File.join(destination, "llms.txt"))
+
+      assert_includes llms, "Draft \\| Published at: 1970-01-01"
+    end
+  end
+
+  def test_descriptions_keep_angle_bracket_text_instead_of_deleting_it
+    page = <<~PAGE
+      ---
+      title: Angle brackets
+      permalink: /angle-brackets/
+      description: "Use `<Widget>` values"
+      ---
+      Body.
+    PAGE
+
+    with_site(
+      config: { "agent_markdown" => { "pages" => true, "include_descriptions" => true } },
+      extra_files: { "angle-brackets.md" => page }
+    ) do |site, destination|
+      site.process
+
+      entry = File.binread(File.join(destination, "llms.txt")).lines.grep(/Angle brackets/).first
+
+      assert_includes entry, "Use \\<Widget\\> values"
+      refute_includes entry, "Use  values"
+    end
+  end
+
+  def test_llms_full_txt_does_not_repeat_the_generated_document_header
+    config = { "agent_markdown" => { "llms_full_txt" => true, "include_document_header" => true } }
+
+    with_site(config: config) do |site, destination|
+      site.process
+
+      source_line = "Source: https://example.test/blog/articles/first/"
+      sibling = File.binread(File.join(destination, "articles", "first.md"))
+      full = File.binread(File.join(destination, "llms-full.txt"))
+
+      header_block = "# First article\n\n#{source_line}\n\n---\n"
+
+      assert_includes sibling, header_block
+      assert_includes full, "### [First article](https://example.test/blog/articles/first.md)"
+      assert_equal 1, full.scan(source_line).length
+      refute_includes full, header_block
     end
   end
 
@@ -922,6 +1816,49 @@ class AgentMarkdownGeneratorTest < Minitest::Test
     DOCUMENT
   end
 
+  def dated_document(title, permalink, date)
+    <<~DOCUMENT
+      ---
+      title: #{title.inspect}
+      permalink: #{permalink.inspect}
+      date: #{date}
+      ---
+      # #{title}
+    DOCUMENT
+  end
+
+  def sectioned_document(title, permalink, section)
+    <<~DOCUMENT
+      ---
+      title: #{title.inspect}
+      permalink: #{permalink.inspect}
+      agent_markdown:
+        section: #{section.inspect}
+      ---
+      # #{title}
+    DOCUMENT
+  end
+
+  def compact_index_identity(content)
+    index_identity(content, /^## (.+)$/, /^- \[([^\]]+)\]/)
+  end
+
+  def full_index_identity(content)
+    index_identity(content, /^## (.+)$/, /^### \[([^\]]+)\]/)
+  end
+
+  def index_identity(content, heading_pattern, entry_pattern)
+    section = nil
+    identities = []
+    content.each_line do |line|
+      heading = heading_pattern.match(line)
+      section = heading.captures.first if heading
+      entry = entry_pattern.match(line)
+      identities << [section, entry.captures.first] if entry
+    end
+    identities
+  end
+
   def messages_logged
     offset = Jekyll.logger.messages.length
     yield
@@ -933,6 +1870,10 @@ class AgentMarkdownGeneratorTest < Minitest::Test
 
     assert_predicate positions, :all?, "expected every item to appear in #{content.inspect}"
     assert_equal positions.sort, positions
+  end
+
+  def agent_generator(site)
+    site.generators.find { |generator| generator.is_a?(Jekyll::AgentMarkdown::Generator) }
   end
 
   def write_source_file(source, name, content)

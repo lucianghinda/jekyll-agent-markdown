@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require_relative "llms_text"
+
 module Jekyll
   module AgentMarkdown
     class AuthorMetadata
@@ -19,7 +21,7 @@ module Jekyll
       def name
         author = config["author"]
         author = author["name"] || author[:name] if author.is_a?(Hash)
-        author ? author.to_s.gsub(/\s+/, " ").strip : ""
+        LlmsText.one_line(author)
       end
     end
   end
