@@ -8,8 +8,9 @@ Gem::Specification.new do |spec|
   spec.authors = ["Lucian Ghinda"]
   spec.email = ["lucian@ghinda.com"]
 
-  spec.summary = "Exports Jekyll posts as raw Markdown siblings and llms.txt"
-  spec.description = "A Jekyll plugin that makes post Markdown available alongside rendered HTML."
+  spec.summary = "Exports Jekyll content as Markdown siblings and llms.txt"
+  spec.description = "A Jekyll plugin that exports posts, pages, and output collections as " \
+                     "Markdown siblings plus curated llms.txt and llms-full.txt files."
   spec.homepage = "https://github.com/lucianghinda/jekyll-agent-markdown"
   spec.license = "Apache-2.0"
   spec.required_ruby_version = ">= 3.2.0"
@@ -19,7 +20,14 @@ Gem::Specification.new do |spec|
   spec.metadata["rubygems_mfa_required"] = "true"
 
   spec.files = Dir.chdir(__dir__) do
-    Dir["lib/**/*.rb", "LICENSE.txt", "README.md", "CHANGELOG.md"]
+    Dir[
+      "lib/**/*.rb",
+      "docs/deployment.md",
+      "examples/**/*",
+      "LICENSE.txt",
+      "README.md",
+      "CHANGELOG.md"
+    ]
   end
   spec.require_paths = ["lib"]
 

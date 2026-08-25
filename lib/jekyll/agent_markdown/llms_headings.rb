@@ -2,6 +2,7 @@
 
 require_relative "author_metadata"
 require_relative "configuration"
+require_relative "llms_text"
 
 module Jekyll
   module AgentMarkdown
@@ -11,19 +12,20 @@ module Jekyll
         @settings = settings
       end
 
-      def to_s
-        [title_heading, description_heading, author_heading, "## Articles", articles_description]
-          .compact.join("\n\n")
+      def to_s(include_articles: true)
+        headings = [title_heading, description_heading, author_heading]
+        headings += ["## Articles", articles_description] if include_articles
+        headings.compact.join("\n\n")
       end
 
       private
 
       attr_reader :site, :settings
 
-      def title_heading = "# #{one_line(site.config.fetch("title", ""))}".rstrip
+      def title_heading = "# #{LlmsText.one_line(site.config.fetch("title", ""))}".rstrip
 
       def description_heading
-        description = one_line(site.config["description"])
+        description = LlmsText.one_line(site.config["description"])
         "> #{description}" unless description.empty?
       end
 
@@ -35,8 +37,6 @@ module Jekyll
       end
 
       def articles_description = "> Posts only. Pages and collections are not included."
-
-      def one_line(value) = value ? value.to_s.gsub(/\s+/, " ").strip : ""
     end
   end
 end

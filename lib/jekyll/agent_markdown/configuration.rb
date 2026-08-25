@@ -6,11 +6,25 @@ require "uri"
 module Jekyll
   module AgentMarkdown
     class Configuration
-      ALLOWED_SETTINGS = %w[include_author include_dates llms_txt posts sort].freeze
+      DEFAULTS = {
+        "posts" => true,
+        "pages" => false,
+        "collections" => [].freeze,
+        "llms_txt" => true,
+        "llms_full_txt" => false,
+        "include_descriptions" => false,
+        "include_document_header" => false,
+        "include_author" => true,
+        "include_dates" => true,
+        "sort" => "desc"
+      }.freeze
+      ALLOWED_SETTINGS = DEFAULTS.keys.freeze
       FALSE_STRINGS = %w[false no off].freeze
       SORT_ORDERS = %w[asc desc].freeze
 
       class << self
+        def defaults = DEFAULTS.dup
+
         def for(site)
           settings = site.config["agent_markdown"]
           return {} if settings.nil? || settings == true
@@ -24,11 +38,15 @@ module Jekyll
         end
 
         def enabled?(settings, key)
-          !disabled?(settings.fetch(key, true))
+          !disabled?(settings.fetch(key, DEFAULTS.fetch(key)))
         end
 
         def sort_order(settings)
-          settings.fetch("sort", "desc")
+          settings.fetch("sort", DEFAULTS.fetch("sort"))
+        end
+
+        def collection_names(settings)
+          settings.fetch("collections", DEFAULTS.fetch("collections"))
         end
 
         def enabled_value?(value, name:)
@@ -56,7 +74,7 @@ module Jekyll
         def normalized_settings(settings)
           normalized = settings.to_h { |key, value| [key.to_s, value] }
           validate_keys!(normalized)
-          validate_values!(normalized)
+          normalize_values!(normalized)
           normalized
         end
 
@@ -69,10 +87,13 @@ module Jekyll
                 "unknown agent_markdown setting#{suffix}: #{unknown.sort.join(", ")}"
         end
 
-        def validate_values!(settings)
+        def normalize_values!(settings)
           settings.each do |key, value|
-            if key == "sort"
+            case key
+            when "sort"
               validate_sort_order!(value)
+            when "collections"
+              settings[key] = CollectionNames.normalize(value)
             else
               validate_value!("agent_markdown.#{key}", value)
             end
@@ -95,6 +116,46 @@ module Jekyll
 
         def valid_value?(value)
           value == true || disabled?(value)
+        end
+      end
+
+      module CollectionNames
+        module_function
+
+        def normalize(value)
+          validate_array!(value)
+          names = value.map { |name| normalized_name!(name) }
+          validate_unique!(names)
+          validate_reserved!(names)
+          names
+        end
+
+        def validate_array!(value)
+          return if value.is_a?(Array)
+
+          raise Jekyll::Errors::FatalException,
+                "agent_markdown.collections must be an Array of unique, non-empty collection names; " \
+                "got #{value.inspect}"
+        end
+
+        def normalized_name!(name)
+          return name.strip if name.is_a?(String) && !name.strip.empty?
+
+          raise Jekyll::Errors::FatalException,
+                "agent_markdown.collections must contain only non-empty collection names; got #{name.inspect}"
+        end
+
+        def validate_unique!(names)
+          return if names.uniq.length == names.length
+
+          raise Jekyll::Errors::FatalException, "agent_markdown.collections must contain unique collection names"
+        end
+
+        def validate_reserved!(names)
+          return unless names.include?("posts")
+
+          raise Jekyll::Errors::FatalException,
+                "agent_markdown.collections cannot include \"posts\"; use agent_markdown.posts instead"
         end
       end
     end

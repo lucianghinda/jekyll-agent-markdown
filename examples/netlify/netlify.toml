@@ -1,0 +1,6 @@
+[build]
+publish = "_site"
+
+[[edge_functions]]
+function = "markdown-negotiation"
+path = "/*"
