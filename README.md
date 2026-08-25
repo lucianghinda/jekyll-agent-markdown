@@ -257,6 +257,22 @@ Explicitly configuring `llms_txt` makes an invalid `url` fatal.
 `llms_full_txt` needs a valid absolute `url` whenever enabled.
 Document headers enforce the same URL rules only when enabled.
 
+## Deployment
+
+The plugin writes static files; any host can serve them as-is.
+Content negotiation is optional and happens at the host, not in Ruby.
+A negotiating host serves the Markdown sibling when a request prefers `text/markdown`.
+It falls back to HTML when the sibling does not exist.
+
+[examples/](examples/) ships dependency-free recipes that share one negotiation contract:
+
+- [Cloudflare Workers](examples/cloudflare)
+- [Netlify Edge Functions](examples/netlify)
+- [nginx with njs](examples/nginx)
+
+All three negotiate only `GET` and `HEAD` requests and skip static assets.
+See the [deployment guide](docs/deployment.md) for the full negotiation contract and host setup.
+
 ## Compatibility
 
 Ruby 3.2 or newer is required.
@@ -264,13 +280,12 @@ Jekyll 4.3 or newer is required, but Jekyll 5 is unsupported.
 The plugin writes files only.
 There is no automatic injection into rendered HTML.
 Layouts must invoke `{% agent_markdown_link %}` explicitly.
-It does not handle content negotiation; see [examples/](examples/) for Cloudflare Workers, Netlify Edge, and nginx recipes.
+It does not handle content negotiation.
 It does not generate crawler policy, analytics, middleware, response headers, or crawler permissions.
 It publishes raw Markdown without rendering Liquid.
 Post exports append enabled date and author metadata.
 Document headers prepend content only when enabled.
 Destination ownership is normalized across case, Unicode normalization, encoded aliases, and file-versus-directory conflicts.
-See the [deployment guide](docs/deployment.md) for host setup.
 
 ### Limitations
 
