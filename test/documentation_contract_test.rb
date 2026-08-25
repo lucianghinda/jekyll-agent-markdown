@@ -59,7 +59,7 @@ class ReadmeDocumentationContractTest < Minitest::Test
   def test_uses_the_expected_section_order
     assert_order read("README.md"),
                  "# jekyll-agent-markdown", "## Installation", "## Quick Start", "## Usage",
-                 "## Options", "## Compatibility", "## Development", "## License"
+                 "## Options", "## Deployment", "## Compatibility", "## Development", "## License"
   end
 
   def test_documents_the_global_defaults_and_scalar_compatibility
